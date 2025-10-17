@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"potja-mongo/pkg/mongo"
+	"maan-go/pkg/mongo"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

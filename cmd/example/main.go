@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"potja-mongo/internal/entities"
-	"potja-mongo/internal/repo"
-	"potja-mongo/pkg/mongo"
+
+	"maan-go/internal/entities"
+	repository "maan-go/internal/repo"
+	"maan-go/pkg/mongo"
 
 	"go.mongodb.org/mongo-driver/bson"
 )

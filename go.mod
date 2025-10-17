@@ -1,4 +1,4 @@
-module potja-mongo
+module maan-go
 
 go 1.25
 

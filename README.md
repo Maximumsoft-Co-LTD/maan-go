@@ -1,16 +1,14 @@
-# potja-mongo
+# maan-go
 
 ไลบรารี Go สำหรับทำงานกับ MongoDB แบบแยกเส้นทางอ่าน/เขียน รองรับการทำงานกับ struct ที่มี type ชัดเจน พร้อม fluent API สำหรับ CRUD, aggregation และ transaction
-
-> **หมายเหตุ**: โมดูลนี้มีชื่อ `potja-mongo` ตาม `go.mod` หากเผยแพร่บน GitHub หรือแพลตฟอร์มอื่น ควรเปลี่ยนชื่อโมดูลและคำสั่ง `go get` ให้ตรงกับโฮสต์จริง เช่น `github.com/your-account/potja-mongo`
 
 ## ติดตั้ง
 
 ```bash
-go get potja-mongo
+go get maan-go
 ```
 
-หรือถ้าเก็บซอร์สไว้ในรีโปเดียวกัน สามารถอ้างอิงโมดูลด้วย path `potja-mongo/pkg/mongo` ได้ทันที
+หรือถ้าเก็บซอร์สไว้ในรีโปเดียวกัน สามารถอ้างอิงโมดูลด้วย path `maan-go/pkg/mongo` ได้ทันที
 
 ## Quick Start
 
@@ -20,9 +18,9 @@ package main
 import (
     "context"
 
+    maango "maan-go"
     "go.mongodb.org/mongo-driver/bson"
     "go.mongodb.org/mongo-driver/bson/primitive"
-    "potja-mongo/pkg/mongo"
 )
 
 type BankConfig struct {
@@ -32,17 +30,17 @@ type BankConfig struct {
 
 func main() {
     ctx := context.Background()
-    client, err := mongo.NewClient(
+    client, err := maango.NewClient(
         ctx,
-        mongo.WithWriteURI("mongodb://localhost:27017"),
-        mongo.WithDatabase("example"),
+        maango.WithWriteURI("mongodb://localhost:27017"),
+        maango.WithDatabase("example"),
     )
     if err != nil {
         panic(err)
     }
     defer client.Close()
 
-    bankColl := mongo.NewCollection[BankConfig](ctx, client, "bank_config")
+    bankColl := maango.NewCollection[BankConfig](ctx, client, "bank_config")
 
     cfg := BankConfig{Name: "demo"}
     if err := bankColl.Create(&cfg); err != nil {
@@ -67,15 +65,15 @@ func main() {
 ## การสร้าง Client และ Options
 
 ```go
-client, err := mongo.NewClient(
+client, err := maango.NewClient(
     ctx,
-    mongo.WithWriteURI("mongodb://writer:27017"),
-    mongo.WithReadURI("mongodb://reader:27017"), // ไม่ระบุจะใช้ URI เขียน
-    mongo.WithDatabase("example"),
-    mongo.WithTimeout(30*time.Second),
-    mongo.WithReadPreference(readpref.SecondaryPreferred()),
-    mongo.WithWriteConcern(writeconcern.New(writeconcern.WMajority())),
-    mongo.WithClientOptions(func(opts *options.ClientOptions) {
+    maango.WithWriteURI("mongodb://writer:27017"),
+    maango.WithReadURI("mongodb://reader:27017"), // ไม่ระบุจะใช้ URI เขียน
+    maango.WithDatabase("example"),
+    maango.WithTimeout(30*time.Second),
+    maango.WithReadPreference(readpref.SecondaryPreferred()),
+    maango.WithWriteConcern(writeconcern.New(writeconcern.WMajority())),
+    maango.WithClientOptions(func(opts *options.ClientOptions) {
         opts.SetAppName("potja-demo")
     }),
 )
@@ -93,7 +91,7 @@ client, err := mongo.NewClient(
 ## การใช้ Collection
 
 ```go
-coll := mongo.NewCollection[BankConfig](ctx, client, "bank_config")
+coll := maango.NewCollection[BankConfig](ctx, client, "bank_config")
 
 // Insert
 if err := coll.Create(&BankConfig{Name: "first"}); err != nil {
@@ -219,12 +217,12 @@ func (a *AuditFields) DefaultUpdatedAt() time.Time {
 
 ```go
 type BankRepository struct {
-    collection mongo.Collection[BankConfig]
+    collection maango.Collection[BankConfig]
 }
 
-func NewBankRepository(ctx context.Context, client mongo.Client) *BankRepository {
+func NewBankRepository(ctx context.Context, client maango.Client) *BankRepository {
     return &BankRepository{
-        collection: mongo.NewCollection[BankConfig](ctx, client, "bank_config"),
+        collection: maango.NewCollection[BankConfig](ctx, client, "bank_config"),
     }
 }
 
@@ -243,4 +241,4 @@ func (r *BankRepository) FindDefault(ctx context.Context) (BankConfig, error) {
 MONGO_INTEGRATION_URI="mongodb://localhost:27017" go test ./pkg/mongo -run ClientRoundTrip
 ```
 
-# potja-mongo
+# maan-go

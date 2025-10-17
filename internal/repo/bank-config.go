@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"potja-mongo/internal/entities"
-	"potja-mongo/pkg/mongo"
+	"maan-go/internal/entities"
+	"maan-go/pkg/mongo"
 )
 
 const (
