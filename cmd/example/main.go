@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	"maan-go/internal/entities"
-	repository "maan-go/internal/repo"
-	"maan-go/pkg/mongo"
+	"maango/internal/entities"
+	"maango/internal/mongo"
+	repository "maango/internal/repo"
 
 	"go.mongodb.org/mongo-driver/bson"
 )

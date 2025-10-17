@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"maan-go/pkg/mongo"
+	"maango/internal/mongo"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

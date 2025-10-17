@@ -1,4 +1,4 @@
-module maan-go
+module maango
 
 go 1.25
 
