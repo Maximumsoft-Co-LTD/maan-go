@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/Maximumsoft-Co-LTD/maango"
-	"github.com/Maximumsoft-Co-LTD/maango/internal/entities"
-	repository "github.com/Maximumsoft-Co-LTD/maango/internal/repo"
+	maango "github.com/Maximumsoft-Co-LTD/maan-go"
+	"github.com/Maximumsoft-Co-LTD/maan-go/internal/entities"
+	repository "github.com/Maximumsoft-Co-LTD/maan-go/internal/repo"
 
 	"go.mongodb.org/mongo-driver/bson"
 )

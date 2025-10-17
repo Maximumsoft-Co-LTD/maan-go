@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Maximumsoft-Co-LTD/maango/internal/mongo"
+	"github.com/Maximumsoft-Co-LTD/maan-go/internal/mongo"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"

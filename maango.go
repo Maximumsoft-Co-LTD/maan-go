@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	maangoMongo "github.com/Maximumsoft-Co-LTD/maango/internal/mongo"
+	maangoMongo "github.com/Maximumsoft-Co-LTD/maan-go/internal/mongo"
 
 	mg "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
