@@ -6,6 +6,7 @@ import (
 
 	maangoMongo "github.com/Maximumsoft-Co-LTD/maan-go/internal/mongo"
 
+	"go.mongodb.org/mongo-driver/bson"
 	mg "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -24,10 +25,14 @@ type (
 	SingleResult[T any]       maangoMongo.SingleResult[T]
 	ManyResult[T any]         maangoMongo.ManyResult[T]
 	Aggregate[T any]          maangoMongo.Aggregate[T]
+	BsonM                     bson.M
+	BsonA                     bson.A
+	BsonE                     bson.E
 )
 
 // NewClient proxies to pkg/mongo.NewClient.
 func NewClient(ctx context.Context, opts ...Option) (Client, error) {
+
 	return maangoMongo.NewClient(ctx, opts...)
 }
 
