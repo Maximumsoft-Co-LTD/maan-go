@@ -52,13 +52,21 @@ func (tx *transaction) Commit() error {
 	return nil
 }
 
-func (tx *transaction) Rollback() {
-	_ = tx.session.AbortTransaction(tx.sessionCtx)
+func (tx *transaction) Rollback(err error) error {
+	tx.session.AbortTransaction(tx.sessionCtx)
 	tx.end()
+	return err
 }
 
 func (tx *transaction) end() {
 	tx.endOnce.Do(func() {
 		tx.session.EndSession(tx.ctx)
 	})
+	tx.client = nil
+	tx.read = nil
+	tx.write = nil
+	tx.session = nil
+	tx.sessionCtx = nil
+	tx.ctx = nil
+	tx.endOnce = sync.Once{}
 }

@@ -90,5 +90,5 @@ type Aggregate[T any] interface {
 type TxSession interface {
 	SessionCtx() context.Context
 	Commit() error
-	Rollback()
+	Rollback(error) error
 }
