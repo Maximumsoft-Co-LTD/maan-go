@@ -3,8 +3,8 @@ package repository
 import (
 	"context"
 
-	"maango/internal/entities"
-	"maango/internal/mongo"
+	"github.com/Maximumsoft-Co-LTD/maango/internal/entities"
+	"github.com/Maximumsoft-Co-LTD/maango/internal/mongo"
 )
 
 const (

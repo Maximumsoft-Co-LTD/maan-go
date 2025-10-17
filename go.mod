@@ -1,4 +1,4 @@
-module maango
+module github.com/Maximumsoft-Co-LTD/maango
 
 go 1.25
 

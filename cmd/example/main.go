@@ -5,20 +5,20 @@ import (
 	"fmt"
 	"log"
 
-	"maango/internal/entities"
-	"maango/internal/mongo"
-	repository "maango/internal/repo"
+	"github.com/Maximumsoft-Co-LTD/maango"
+	"github.com/Maximumsoft-Co-LTD/maango/internal/entities"
+	repository "github.com/Maximumsoft-Co-LTD/maango/internal/repo"
 
 	"go.mongodb.org/mongo-driver/bson"
 )
 
 func main() {
 	ctx := context.Background()
-	mongoClient, err := mongo.NewClient(
+	mongoClient, err := maango.NewClient(
 		ctx,
-		mongo.WithWriteURI("mongodb://localhost:27017"),
-		mongo.WithReadURI("mongodb://localhost:27017"),
-		mongo.WithDatabase("test"),
+		maango.WithWriteURI("mongodb://localhost:27017"),
+		maango.WithReadURI("mongodb://localhost:27017"),
+		maango.WithDatabase("test"),
 	)
 	if err != nil {
 		log.Fatalf("Failed to create mongo client: %v", err)
