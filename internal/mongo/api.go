@@ -33,7 +33,7 @@ type Collection[T any] interface {
 	SaveMany(filter any, update any) error
 	TxtFind(q string) ([]T, error)
 	WithTx(fn func(ctx context.Context) error) error
-	StartTx() (TxSession, error)
+	StartTx(ctx context.Context) (TxSession, error)
 }
 
 // ExtendedCollection supports building reusable dynamic queries that can be chained.
@@ -88,7 +88,6 @@ type Aggregate[T any] interface {
 
 // TxSession exposes a MongoDB session used for manual transaction control.
 type TxSession interface {
-	SessionCtx() context.Context
-	Commit() error
-	Rollback(error) error
+	Ctx() context.Context
+	Close(err *error)
 }

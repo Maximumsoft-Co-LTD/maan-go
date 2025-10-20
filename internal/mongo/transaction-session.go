@@ -2,71 +2,69 @@ package mongo
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	mg "go.mongodb.org/mongo-driver/mongo"
 )
 
-type transaction struct {
+type transactionSession struct {
 	session    mg.Session
 	sessionCtx mg.SessionContext
 	ctx        context.Context
 	client     Client
 	read       *mg.Collection
 	write      *mg.Collection
-	endOnce    sync.Once
+	once       sync.Once
 }
 
-func newTransaction(ctx context.Context, m Client, read *mg.Collection, write *mg.Collection) (TxSession, error) {
-	session, err := m.Write().StartSession()
+func NewTransactionSession(ctx context.Context, client *mg.Client, read, write *mg.Collection) (TxSession, error) {
+	s, err := client.StartSession()
 	if err != nil {
 		return nil, err
 	}
-	if err := session.StartTransaction(); err != nil {
-		session.EndSession(ctx)
+	if err := s.StartTransaction(); err != nil {
+		s.EndSession(ctx)
 		return nil, err
 	}
-	sessionCtx := mg.NewSessionContext(ctx, session)
-	return &transaction{
-		session:    session,
-		sessionCtx: sessionCtx,
+	return &transactionSession{
+		session:    s,
+		sessionCtx: mg.NewSessionContext(ctx, s),
 		ctx:        ctx,
-		client:     m,
 		read:       read,
 		write:      write,
 	}, nil
 }
 
-var _ TxSession = (*transaction)(nil)
+func (s *transactionSession) Ctx() context.Context { return s.sessionCtx }
 
-func (tx *transaction) SessionCtx() context.Context {
-	return tx.sessionCtx
-}
+func (s *transactionSession) Close(errp *error) {
+	defer func() {
+		if p := recover(); p != nil {
+			if s.session != nil {
+				_ = s.session.AbortTransaction(s.sessionCtx)
+				s.session.EndSession(s.ctx)
+			}
+			s.session, s.sessionCtx, s.ctx = nil, nil, nil
+			panic(p)
+		}
+	}()
 
-func (tx *transaction) Commit() error {
-	defer tx.end()
-	if err := tx.session.CommitTransaction(tx.sessionCtx); err != nil {
-		_ = tx.session.AbortTransaction(tx.sessionCtx)
-		return err
-	}
-	return nil
-}
-
-func (tx *transaction) Rollback(err error) error {
-	tx.session.AbortTransaction(tx.sessionCtx)
-	tx.end()
-	return err
-}
-
-func (tx *transaction) end() {
-	tx.endOnce.Do(func() {
-		tx.session.EndSession(tx.ctx)
+	s.once.Do(func() {
+		if s.session == nil {
+			return
+		}
+		if errp != nil && *errp == nil {
+			if err := s.session.CommitTransaction(s.sessionCtx); err != nil {
+				_ = s.session.AbortTransaction(s.sessionCtx)
+				if *errp == nil {
+					*errp = fmt.Errorf("commit failed: %w", err)
+				}
+			}
+		} else {
+			_ = s.session.AbortTransaction(s.sessionCtx)
+		}
+		s.session.EndSession(s.ctx)
+		s.session, s.sessionCtx, s.ctx = nil, nil, nil
 	})
-	tx.client = nil
-	tx.read = nil
-	tx.write = nil
-	tx.session = nil
-	tx.sessionCtx = nil
-	tx.ctx = nil
-	tx.endOnce = sync.Once{}
 }

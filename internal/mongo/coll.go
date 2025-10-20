@@ -36,7 +36,7 @@ func NewCollection[T any](ctx context.Context, client Client, name string) Colle
 
 func (c *collection[T]) Ctx(ctx context.Context) Collection[T] {
 	c.ctx = &ctx
-	return c
+	return Collection[T](c) // ใช้ type assertion เพื่อส่งคืนประเภท Collection[T] ที่ถูกต้อง
 }
 
 func (c *collection[T]) getCtx() context.Context {
@@ -134,23 +134,21 @@ func (c *collection[T]) Name() string {
 	return c.collName
 }
 
-func (c *collection[T]) StartTx() (TxSession, error) {
-	return newTransaction(c.getCtx(), c.client, c.read, c.write)
+func (c *collection[T]) StartTx(ctx context.Context) (TxSession, error) {
+	return NewTransactionSession(ctx, c.client.Write(), c.read, c.write)
 }
 
 func (c *collection[T]) WithTx(fn func(ctx context.Context) error) error {
-	session, err := c.client.Write().StartSession()
+	sess, err := c.client.Write().StartSession()
 	if err != nil {
 		return err
 	}
-	defer session.EndSession(c.getCtx())
+	defer sess.EndSession(c.getCtx())
 
-	if _, err := session.WithTransaction(c.getCtx(), func(sc mg.SessionContext) (interface{}, error) {
-		return nil, fn(sc) // ใช้ session context
-	}); err != nil {
-		return err
-	}
-	return nil
+	_, err = sess.WithTransaction(c.getCtx(), func(sc mg.SessionContext) (any, error) {
+		return nil, fn(sc)
+	})
+	return err
 }
 
 func (c *collection[T]) Find(filter any) ManyResult[T] {
