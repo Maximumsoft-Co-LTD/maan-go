@@ -33,7 +33,7 @@ type Collection[T any] interface {
 	SaveMany(filter any, update any) error
 	TxtFind(q string) ([]T, error)
 	WithTx(fn func(ctx context.Context) error) error
-	StartTx(ctx context.Context) (TxSession, error)
+	StartTx() (TxSession, error)
 }
 
 // ExtendedCollection supports building reusable dynamic queries that can be chained.

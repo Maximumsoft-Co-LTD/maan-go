@@ -134,8 +134,8 @@ func (c *collection[T]) Name() string {
 	return c.collName
 }
 
-func (c *collection[T]) StartTx(ctx context.Context) (TxSession, error) {
-	return NewTransactionSession(ctx, c.client.Write(), c.read, c.write)
+func (c *collection[T]) StartTx() (TxSession, error) {
+	return NewTransactionSession(c.getCtx(), c.client.Write(), c.read, c.write)
 }
 
 func (c *collection[T]) WithTx(fn func(ctx context.Context) error) error {
