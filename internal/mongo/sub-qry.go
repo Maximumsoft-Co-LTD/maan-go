@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"reflect"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -211,50 +212,51 @@ func (m *many[T]) Cnt() (int64, error)                                  { return
 
 // #region helper functions
 
-func ensureUpdateHasTimestamp(update any) any {
+func ensureUpdateHasTimestamp(update any) bson.M {
 	const updatedAt = "updated_at"
 	now := time.Now().UTC()
-	switch u := update.(type) {
+
+	u := toBsonM(update)
+
+	hasOp := false
+	for k := range u {
+		if len(k) > 0 && k[0] == '$' {
+			hasOp = true
+			break
+		}
+	}
+	if !hasOp {
+		u = bson.M{"$set": u}
+	}
+
+	set := toBsonM(u["$set"])
+	set[updatedAt] = now
+	u["$set"] = set
+
+	return u
+}
+
+func toBsonM(v any) bson.M {
+	switch m := v.(type) {
+	case nil:
+		return bson.M{}
 	case bson.M:
-		if set, ok := u["$set"].(bson.M); ok {
-			if _, has := set[updatedAt]; !has {
-				set[updatedAt] = now
-				u["$set"] = set
-			}
-			return u
-		}
-		u["$set"] = bson.M{updatedAt: now}
-		return u
+		return m
 	case map[string]any:
-		if set, ok := u["$set"].(map[string]any); ok {
-			if _, has := set[updatedAt]; !has {
-				set[updatedAt] = now
-				u["$set"] = set
-			}
-			return u
-		}
-		u["$set"] = map[string]any{updatedAt: now}
-		return u
+		return bson.M(m)
 	case bson.D:
-		hasSet := false
-		for i := range u {
-			if u[i].Key == "$set" {
-				hasSet = true
-				if m, ok := u[i].Value.(bson.M); ok {
-					if _, ok2 := m[updatedAt]; !ok2 {
-						m[updatedAt] = now
-						u[i].Value = m
-					}
-				}
-				break
-			}
-		}
-		if !hasSet {
-			u = append(u, bson.E{Key: "$set", Value: bson.M{updatedAt: now}})
-		}
-		return u
+		return m.Map()
 	default:
-		return bson.M{"$set": bson.M{updatedAt: now}}
+		rv := reflect.ValueOf(v)
+		if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
+			out := bson.M{}
+			iter := rv.MapRange()
+			for iter.Next() {
+				out[iter.Key().String()] = iter.Value().Interface()
+			}
+			return out
+		}
+		return bson.M{}
 	}
 }
 
