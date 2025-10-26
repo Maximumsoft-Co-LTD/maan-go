@@ -12,14 +12,17 @@ type transactionSession struct {
 	session    mg.Session
 	sessionCtx mg.SessionContext
 	ctx        context.Context
-	client     Client
-	read       *mg.Collection
-	write      *mg.Collection
 	once       sync.Once
 }
 
-func NewTransactionSession(ctx context.Context, client *mg.Client, read, write *mg.Collection) (TxSession, error) {
-	s, err := client.StartSession()
+// NewTransactionSession is a helper method to start a new transaction session.
+// Example:
+// tx, err := NewTransactionSession(context.Background(), client)
+// tx.Ctx()
+// NewTransactionSession will return a new transaction session instance with the context set.
+// The transaction session is isolated and will not affect the original collection.
+func NewTransactionSession(ctx context.Context, client Client) (TxSession, error) {
+	s, err := client.Write().StartSession()
 	if err != nil {
 		return nil, err
 	}
@@ -30,19 +33,29 @@ func NewTransactionSession(ctx context.Context, client *mg.Client, read, write *
 	return &transactionSession{
 		session:    s,
 		sessionCtx: mg.NewSessionContext(ctx, s),
-		ctx:        ctx,
-		read:       read,
-		write:      write,
 	}, nil
 }
 
+// Ctx is a helper method to get the context of the transaction session.
+// Example:
+// ctx := tx.Ctx()
+// Ctx will return the context of the transaction session with the context set.
+// The context is isolated and will not affect the original collection.
+// The context is the session context.
 func (s *transactionSession) Ctx() context.Context { return s.sessionCtx }
 
+// Close is a helper method to close the transaction session.
+// Example:
+// err := tx.Close(&err)
+// Close will return a new error with the context set.
+// The error is isolated and will not affect the original collection.
+// The error is committed if *errp is nil, otherwise it is aborted.
+// The transaction session is closed and the context is reset.
 func (s *transactionSession) Close(errp *error) {
 	defer func() {
 		if p := recover(); p != nil {
 			if s.session != nil {
-				_ = s.session.AbortTransaction(s.sessionCtx)
+				s.session.AbortTransaction(s.sessionCtx)
 				s.session.EndSession(s.ctx)
 			}
 			s.session, s.sessionCtx, s.ctx = nil, nil, nil
@@ -56,13 +69,13 @@ func (s *transactionSession) Close(errp *error) {
 		}
 		if errp != nil && *errp == nil {
 			if err := s.session.CommitTransaction(s.sessionCtx); err != nil {
-				_ = s.session.AbortTransaction(s.sessionCtx)
+				s.session.AbortTransaction(s.sessionCtx)
 				if *errp == nil {
 					*errp = fmt.Errorf("commit failed: %w", err)
 				}
 			}
 		} else {
-			_ = s.session.AbortTransaction(s.sessionCtx)
+			s.session.AbortTransaction(s.sessionCtx)
 		}
 		s.session.EndSession(s.ctx)
 		s.session, s.sessionCtx, s.ctx = nil, nil, nil

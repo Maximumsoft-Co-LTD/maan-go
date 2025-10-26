@@ -16,7 +16,6 @@ import (
 // It is not exported and is meant to be embedded by other query structs.
 type queryCore struct {
 	ctx      context.Context
-	m        Client
 	collName string
 	coll     *mongo.Collection
 	filter   any
@@ -26,15 +25,14 @@ type queryCore struct {
 }
 
 // newQueryCore initializes the common fields for a query builder.
-func newQueryCore(ctx context.Context, m Client, collName string, filter any) queryCore {
+func newQueryCore(ctx context.Context, coll *mongo.Collection, collName string, filter any) queryCore {
 	if filter == nil {
 		filter = bson.M{}
 	}
 	return queryCore{
 		ctx:      ctx,
-		m:        m,
 		collName: collName,
-		coll:     m.Read().Database(m.DbName()).Collection(collName),
+		coll:     coll,
 		filter:   filter,
 	}
 }
@@ -51,9 +49,9 @@ type single[T any] struct {
 var _ SingleResult[any] = (*single[any])(nil)
 
 // NewSingle creates a new query builder for a single document.
-func NewSingle[T any](ctx context.Context, m Client, collName string, query any) SingleResult[T] {
+func NewSingle[T any](ctx context.Context, coll *mongo.Collection, collName string, query any) SingleResult[T] {
 	return &single[T]{
-		queryCore: newQueryCore(ctx, m, collName, query),
+		queryCore: newQueryCore(ctx, coll, collName, query),
 	}
 }
 
@@ -73,19 +71,11 @@ func (s *single[T]) build() *options.FindOneOptions {
 		fo.SetHint(s.hint)
 	}
 	if s.extra != nil {
-		if s.extra.Projection != nil {
-			fo.SetProjection(s.extra.Projection)
-		}
-		if s.extra.Sort != nil {
-			fo.SetSort(s.extra.Sort)
-		}
-		if s.extra.Hint != nil {
-			fo.SetHint(s.extra.Hint)
-		}
+		return mergeFindOneOptions(fo, s.extra)
 	}
 	return fo
 }
-func (s *single[T]) Res(out *T) error {
+func (s *single[T]) Result(out *T) error {
 	return s.coll.FindOne(s.ctx, s.filter, s.build()).Decode(out)
 }
 
@@ -103,17 +93,17 @@ type many[T any] struct {
 var _ ManyResult[any] = (*many[any])(nil)
 
 // NewMany creates a new query builder for multiple documents.
-func NewMany[T any](ctx context.Context, m Client, collName string, filter any) ManyResult[T] {
+func NewMany[T any](ctx context.Context, coll *mongo.Collection, collName string, filter any) ManyResult[T] {
 	return &many[T]{
-		queryCore: newQueryCore(ctx, m, collName, filter),
+		queryCore: newQueryCore(ctx, coll, collName, filter),
 	}
 }
 
 func (m *many[T]) Proj(p any) ManyResult[T]                   { m.proj = p; return m }
 func (m *many[T]) Sort(s any) ManyResult[T]                   { m.sort = s; return m }
 func (m *many[T]) Hint(h any) ManyResult[T]                   { m.hint = h; return m }
-func (m *many[T]) Lim(n int64) ManyResult[T]                  { m.limit = n; return m }
-func (m *many[T]) Skp(n int64) ManyResult[T]                  { m.skip = n; return m }
+func (m *many[T]) Limit(n int64) ManyResult[T]                { m.limit = n; return m }
+func (m *many[T]) Skip(n int64) ManyResult[T]                 { m.skip = n; return m }
 func (m *many[T]) Bsz(n int32) ManyResult[T]                  { m.batch = &n; return m }
 func (m *many[T]) Opts(fo *options.FindOptions) ManyResult[T] { m.extra = fo; return m }
 func (m *many[T]) build() *options.FindOptions {
@@ -137,24 +127,7 @@ func (m *many[T]) build() *options.FindOptions {
 		fo.SetBatchSize(*m.batch)
 	}
 	if m.extra != nil {
-		if m.extra.Limit != nil {
-			fo.SetLimit(*m.extra.Limit)
-		}
-		if m.extra.Skip != nil {
-			fo.SetSkip(*m.extra.Skip)
-		}
-		if m.extra.Sort != nil {
-			fo.SetSort(m.extra.Sort)
-		}
-		if m.extra.Projection != nil {
-			fo.SetProjection(m.extra.Projection)
-		}
-		if m.extra.Hint != nil {
-			fo.SetHint(m.extra.Hint)
-		}
-		if m.extra.BatchSize != nil {
-			fo.SetBatchSize(*m.extra.BatchSize)
-		}
+		return mergeFindOptions(fo, m.extra)
 	}
 	return fo
 }
@@ -178,7 +151,7 @@ func (m *many[T]) All() ([]T, error) {
 	return out, nil
 }
 
-func (m *many[T]) Res(out *[]T) error {
+func (m *many[T]) Result(out *[]T) error {
 	items, err := m.All()
 	if err != nil {
 		return err
@@ -187,7 +160,7 @@ func (m *many[T]) Res(out *[]T) error {
 	return nil
 }
 
-func (m *many[T]) Strm(fn func(ctx context.Context, doc T) error) error {
+func (m *many[T]) Stream(fn func(ctx context.Context, doc T) error) error {
 	cur, err := m.coll.Find(m.ctx, m.filter, m.build())
 	if err != nil {
 		return err
@@ -205,7 +178,7 @@ func (m *many[T]) Strm(fn func(ctx context.Context, doc T) error) error {
 	return cur.Err()
 }
 
-func (m *many[T]) Each(fn func(ctx context.Context, doc T) error) error { return m.Strm(fn) }
+func (m *many[T]) Each(fn func(ctx context.Context, doc T) error) error { return m.Stream(fn) }
 func (m *many[T]) Cnt() (int64, error)                                  { return m.coll.CountDocuments(m.ctx, m.filter) }
 
 //#endregion
@@ -258,6 +231,98 @@ func toBsonM(v any) bson.M {
 		}
 		return bson.M{}
 	}
+}
+
+func mergeFindOptions(fo *options.FindOptions, opts ...*options.FindOptions) *options.FindOptions {
+	if opts == nil {
+		return fo
+	}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+
+		if opt.AllowDiskUse != nil {
+			fo.AllowDiskUse = opt.AllowDiskUse
+		}
+		if opt.AllowPartialResults != nil {
+			fo.AllowPartialResults = opt.AllowPartialResults
+		}
+		if opt.BatchSize != nil {
+			fo.BatchSize = opt.BatchSize
+		}
+		if opt.Collation != nil {
+			fo.Collation = opt.Collation
+		}
+		if opt.Comment != nil {
+			fo.Comment = opt.Comment
+		}
+		if opt.CursorType != nil {
+			fo.CursorType = opt.CursorType
+		}
+		if opt.Let != nil {
+			fo.Let = opt.Let
+		}
+		if opt.Max != nil {
+			fo.Max = opt.Max
+		}
+		if opt.MaxAwaitTime != nil {
+			fo.MaxAwaitTime = opt.MaxAwaitTime
+		}
+		if opt.MaxTime != nil {
+			fo.MaxTime = opt.MaxTime
+		}
+		if opt.Min != nil {
+			fo.Min = opt.Min
+		}
+		if opt.NoCursorTimeout != nil {
+			fo.NoCursorTimeout = opt.NoCursorTimeout
+		}
+		if opt.ReturnKey != nil {
+			fo.ReturnKey = opt.ReturnKey
+		}
+		if opt.ShowRecordID != nil {
+			fo.ShowRecordID = opt.ShowRecordID
+		}
+	}
+	return fo
+}
+
+func mergeFindOneOptions(fo *options.FindOneOptions, opts ...*options.FindOneOptions) *options.FindOneOptions {
+	if opts == nil {
+		return fo
+	}
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if opt.AllowPartialResults != nil {
+			fo.AllowPartialResults = opt.AllowPartialResults
+		}
+		if opt.Collation != nil {
+			fo.Collation = opt.Collation
+		}
+		if opt.Comment != nil {
+			fo.Comment = opt.Comment
+		}
+		if opt.Max != nil {
+			fo.Max = opt.Max
+		}
+		if opt.MaxTime != nil {
+			fo.MaxTime = opt.MaxTime
+		}
+		if opt.Min != nil {
+			fo.Min = opt.Min
+		}
+		if opt.ReturnKey != nil {
+			fo.ReturnKey = opt.ReturnKey
+		}
+		if opt.ShowRecordID != nil {
+			fo.ShowRecordID = opt.ShowRecordID
+		}
+	}
+
+	return fo
 }
 
 //#endregion

@@ -10,8 +10,7 @@ import (
 
 // #region (aggregate) this
 type agg[T any] struct {
-	ctx       *context.Context
-	client    Client
+	ctx       context.Context
 	coll      *mongo.Collection
 	collName  string
 	pipeline  any
@@ -22,26 +21,46 @@ type agg[T any] struct {
 
 var _ Aggregate[any] = (*agg[any])(nil)
 
-func NewAgg[T any](ctx context.Context, client Client, collName string, pipeline any) Aggregate[T] {
+func NewAgg[T any](ctx context.Context, coll *mongo.Collection, collName string, pipeline any) Aggregate[T] {
 	return &agg[T]{
-		ctx:      &ctx,
-		client:   client,
+		ctx:      normalizeCtx(ctx),
 		collName: collName,
-		coll:     client.Read().Database(client.DbName()).Collection(collName),
+		coll:     coll,
 		pipeline: pipeline,
 	}
 }
 
 func (a *agg[T]) getCtx() context.Context {
-	if a.ctx == nil {
-		return context.Background()
-	}
-	return *a.ctx
+	return normalizeCtx(a.ctx)
 }
 
-func (a *agg[T]) Disk(b bool) Aggregate[T]                       { a.allowDisk = &b; return a }
-func (a *agg[T]) Bsz(n int32) Aggregate[T]                       { a.batch = &n; return a }
-func (a *agg[T]) Opts(ao *options.AggregateOptions) Aggregate[T] { a.extra = ao; return a }
+func (a *agg[T]) Disk(b bool) Aggregate[T] {
+	next := *a
+	next.allowDisk = boolPtr(b)
+	return &next
+}
+func (a *agg[T]) Bsz(n int32) Aggregate[T] {
+	next := *a
+	next.batch = int32Ptr(n)
+	return &next
+}
+func (a *agg[T]) Opts(ao *options.AggregateOptions) Aggregate[T] {
+	next := *a
+	next.extra = ao
+	return &next
+}
+
+func (a *agg[T]) Result(out *[]T) error {
+	if out == nil {
+		return nil
+	}
+	items, err := a.All()
+	if err != nil {
+		return err
+	}
+	*out = items
+	return nil
+}
 
 func (a *agg[T]) All() ([]T, error) {
 	var out []T
@@ -83,7 +102,7 @@ func (a *agg[T]) Raw() ([]bson.M, error) {
 	return out, nil
 }
 
-func (a *agg[T]) Strm(fn func(ctx context.Context, doc T) error) error {
+func (a *agg[T]) Stream(fn func(ctx context.Context, doc T) error) error {
 	cur, err := a.coll.Aggregate(a.getCtx(), a.pipeline, a.build())
 	if err != nil {
 		return err
@@ -101,9 +120,9 @@ func (a *agg[T]) Strm(fn func(ctx context.Context, doc T) error) error {
 	return cur.Err()
 }
 
-func (a *agg[T]) Each(fn func(ctx context.Context, doc T) error) error { return a.Strm(fn) }
+func (a *agg[T]) Each(fn func(ctx context.Context, doc T) error) error { return a.Stream(fn) }
 
-func (a *agg[T]) strmRaw(fn func(ctx context.Context, doc bson.M) error) error {
+func (a *agg[T]) streamRaw(fn func(ctx context.Context, doc bson.M) error) error {
 	cur, err := a.coll.Aggregate(a.getCtx(), a.pipeline, a.build())
 	if err != nil {
 		return err
@@ -121,25 +140,32 @@ func (a *agg[T]) strmRaw(fn func(ctx context.Context, doc bson.M) error) error {
 	return cur.Err()
 }
 
-func (a *agg[T]) EachRaw(fn func(ctx context.Context, doc bson.M) error) error { return a.strmRaw(fn) }
+func (a *agg[T]) EachRaw(fn func(ctx context.Context, doc bson.M) error) error {
+	return a.streamRaw(fn)
+}
 
 func (a *agg[T]) build() *options.AggregateOptions {
-	ao := options.AggregateOptions{}
+	ao := options.Aggregate()
+	if a.extra != nil {
+		*ao = *a.extra
+	}
 	if a.allowDisk != nil {
 		ao.SetAllowDiskUse(*a.allowDisk)
 	}
 	if a.batch != nil {
 		ao.SetBatchSize(*a.batch)
 	}
-	if a.extra != nil {
-		if a.extra.AllowDiskUse != nil {
-			ao.SetAllowDiskUse(*a.extra.AllowDiskUse)
-		}
-		if a.extra.BatchSize != nil {
-			ao.SetBatchSize(*a.extra.BatchSize)
-		}
-	}
-	return &ao
+	return ao
 }
 
 //#endregion
+
+func boolPtr(v bool) *bool {
+	val := v
+	return &val
+}
+
+func int32Ptr(v int32) *int32 {
+	val := v
+	return &val
+}

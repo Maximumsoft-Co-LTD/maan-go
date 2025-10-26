@@ -1,6 +1,6 @@
 module github.com/Maximumsoft-Co-LTD/maan-go
 
-go 1.25
+go 1.22.5
 
 require go.mongodb.org/mongo-driver v1.17.4
 

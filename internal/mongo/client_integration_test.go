@@ -71,7 +71,7 @@ func TestClientRoundTrip(t *testing.T) {
 	})
 
 	var fetched integrationDoc
-	if err := coll.FindOne(bson.M{"_id": doc.ID}).Res(&fetched); err != nil {
+	if err := coll.FindOne(bson.M{"_id": doc.ID}).Result(&fetched); err != nil {
 		t.Fatalf("failed to fetch document: %v", err)
 	}
 

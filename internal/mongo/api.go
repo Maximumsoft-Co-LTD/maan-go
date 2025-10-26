@@ -28,7 +28,7 @@ type Collection[T any] interface {
 	FindOne(query any) SingleResult[T]
 	FindMany(filter any) ManyResult[T]
 	Name() string
-	ReFind(q string, fields ...string) ([]T, error)
+	RegexFields(q string, fields ...string) ([]T, error)
 	Save(filter any, update any) error
 	SaveMany(filter any, update any) error
 	TxtFind(q string) ([]T, error)
@@ -56,7 +56,7 @@ type SingleResult[T any] interface {
 	Sort(s any) SingleResult[T]
 	Hint(h any) SingleResult[T]
 	Opts(fo *options.FindOneOptions) SingleResult[T]
-	Res(out *T) error
+	Result(out *T) error
 }
 
 // ManyResult models a find-many query with modifiers and streaming helpers.
@@ -64,13 +64,13 @@ type ManyResult[T any] interface {
 	Proj(p any) ManyResult[T]
 	Sort(s any) ManyResult[T]
 	Hint(h any) ManyResult[T]
-	Lim(n int64) ManyResult[T]
-	Skp(n int64) ManyResult[T]
+	Limit(n int64) ManyResult[T]
+	Skip(n int64) ManyResult[T]
 	Bsz(n int32) ManyResult[T]
 	Opts(fo *options.FindOptions) ManyResult[T]
 	All() ([]T, error)
-	Res(out *[]T) error
-	Strm(fn func(ctx context.Context, doc T) error) error
+	Result(out *[]T) error
+	Stream(fn func(ctx context.Context, doc T) error) error
 	Each(fn func(ctx context.Context, doc T) error) error
 	Cnt() (int64, error)
 }
@@ -81,13 +81,17 @@ type Aggregate[T any] interface {
 	Bsz(n int32) Aggregate[T]
 	Opts(ao *options.AggregateOptions) Aggregate[T]
 	All() ([]T, error)
+	Result(out *[]T) error
 	Raw() ([]bson.M, error)
-	Strm(fn func(ctx context.Context, doc T) error) error
+	Stream(fn func(ctx context.Context, doc T) error) error
 	Each(fn func(ctx context.Context, doc T) error) error
 }
 
 // TxSession exposes a MongoDB session used for manual transaction control.
 type TxSession interface {
+	// Ctx returns the session-aware context that must be passed to collection operations.
 	Ctx() context.Context
+	// Close commits the transaction when *err == nil, otherwise aborts it.
+	// Always call via `defer tx.Close(&err)` to ensure proper cleanup.
 	Close(err *error)
 }

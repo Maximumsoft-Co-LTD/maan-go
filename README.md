@@ -48,7 +48,7 @@ func main() {
     }
 
     var stored BankConfig
-    if err := bankColl.FindOne(bson.M{"_id": cfg.ID}).Res(&stored); err != nil {
+    if err := bankColl.FindOne(bson.M{"_id": cfg.ID}).Result(&stored); err != nil {
         panic(err)
     }
 }
@@ -60,7 +60,7 @@ func main() {
 - `ExtendedCollection[T]` – query builder แบบ chainable (`By`, `Where`, `Count`, `Exists`)
 - `SingleResult[T]` / `ManyResult[T]` – fluent query สำหรับ `FindOne` / `FindMany`
 - `Aggregate[T]` – ทำ aggregation pipeline พร้อม helper สำหรับ stream และ raw result
-- `TxSession` – จัดการทรานแซกชันแบบควบคุมเอง (`Commit`, `Rollback`)
+- `TxSession` – จัดการทรานแซกชันแบบควบคุมเองด้วย pattern `defer tx.Close(&err)`
 
 ## การสร้าง Client และ Options
 
@@ -103,7 +103,7 @@ var cfg BankConfig
 if err := coll.
     FindOne(bson.M{"name": "first"}).
     Proj(bson.M{"_id": 1, "name": 1}).
-    Res(&cfg); err != nil {
+    Result(&cfg); err != nil {
     panic(err)
 }
 
@@ -111,7 +111,7 @@ if err := coll.
 items, err := coll.
     FindMany(bson.M{"is_active": true}).
     Sort(bson.M{"created_at": -1}).
-    Lim(10).
+    Limit(10).
     All()
 ```
 
@@ -121,9 +121,26 @@ items, err := coll.
 var result []BankConfig
 err := coll.
     Build(ctx).
-    By("Code", "KTB").          // map field struct -> ฟิลด์ใน Mongo ให้อัตโนมัติ
+    By("Code", "KTB").
     Where(bson.M{"status": "active"}).
     Many(&result)
+```
+
+### Example: unit test แบบไม่ต้องต่อ Mongo จริง
+
+```go
+func TestFindDefault(t *testing.T) {
+    client, err := maango.NewFakeClient()
+    if err != nil {
+        t.Fatalf("fake client: %v", err)
+    }
+    repo := repository.NewMongoRepo(context.Background(), client)
+    defer repo.Close()
+
+    coll := repo.BankConfig(context.Background())
+    // ทดสอบ builder/filter logic ได้โดยไม่ต้องมี MongoDB จริง
+    _ = coll.Build(context.Background()).By("Code", "KTB")
+}
 ```
 
 ### Aggregation
@@ -157,17 +174,17 @@ if err := coll.WithTx(func(txCtx context.Context) error {
     panic(err)
 }
 
-// แบบควบคุมเอง
+// แบบควบคุมเองด้วย defer tx.Close(&err)
 tx, err := coll.StartTx()
 if err != nil {
     panic(err)
 }
-txCtx := tx.SessionCtx()
+var txErr error
+defer tx.Close(&txErr)
+
+txCtx := tx.Ctx()
 if err := coll.Ctx(txCtx).Create(&BankConfig{Name: "manual"}); err != nil {
-    tx.Rollback()
-    panic(err)
-}
-if err := tx.Commit(); err != nil {
+    txErr = err
     panic(err)
 }
 ```
@@ -228,7 +245,7 @@ func NewBankRepository(ctx context.Context, client maango.Client) *BankRepositor
 
 func (r *BankRepository) FindDefault(ctx context.Context) (BankConfig, error) {
     var cfg BankConfig
-    err := r.collection.Ctx(ctx).FindOne(bson.M{"is_default": true}).Res(&cfg)
+    err := r.collection.Ctx(ctx).FindOne(bson.M{"is_default": true}).Result(&cfg)
     return cfg, err
 }
 ```
