@@ -70,22 +70,53 @@ func WithClientOptions(mutator func(*options.ClientOptions)) Option {
 }
 
 // Collection constructors and helpers.
+// Example:
+// coll := NewColl[testDoc](context.Background(), client, "docs")
+// coll.FindOne(bson.M{"name": "foo"})
+// NewColl will return a new collection instance with the context set.
+// The collection is isolated and will not affect the original collection.
 func NewColl[T any](ctx context.Context, client Client, name string) Coll[T] {
 	return mg.NewCollection[T](ctx, client, name)
 }
 
+// NewExColl is a helper method to create a new extended collection.
+// Example:
+// exColl := NewExColl[testDoc](context.Background(), read, write, "docs")
+// exColl.By("Name", "foo")
+// exColl.Where(bson.M{"active": true})
+// NewExColl will return a new extended collection instance with the context set.
+// The extended collection is isolated and will not affect the original collection.
 func NewExColl[T any](ctx context.Context, read, write *mongo.Collection, name string) ExColl[T] {
 	return mg.NewExtendedCollection[T](ctx, read, write, name)
 }
 
+// NewSingle is a helper method to create a new single result.
+// Example:
+// single := NewSingle[testDoc](context.Background(), coll, "docs", bson.M{"name": "foo"})
+// single.Result(&result)
+// NewSingle will return a new single result instance with the context set.
+// The single result is isolated and will not affect the original collection.
 func NewSingle[T any](ctx context.Context, coll *mongo.Collection, collName string, query any) SingleResult[T] {
 	return mg.NewSingle[T](ctx, coll, collName, query)
 }
 
+// NewMany is a helper method to create a new many result.
+// Example:
+// many := NewMany[testDoc](context.Background(), coll, "docs", bson.M{"name": "foo"})
+// many.Result(&results)
+// NewMany will return a new many result instance with the context set.
+// The many result is isolated and will not affect the original collection.
 func NewMany[T any](ctx context.Context, coll *mongo.Collection, collName string, filter any) ManyResult[T] {
 	return mg.NewMany[T](ctx, coll, collName, filter)
 }
 
+// NewAgg is a helper method to create a new aggregate.
+// Example:
+// agg := NewAgg[testDoc](context.Background(), coll, "docs", bson.M{"$match": bson.M{"name": "foo"}})
+// agg.Disk(true)
+// agg.Bsz(100)
+// NewAgg will return a new aggregate instance with the context set.
+// The aggregate is isolated and will not affect the original collection.
 func NewAgg[T any](ctx context.Context, coll *mongo.Collection, collName string, pipeline any) Aggregate[T] {
 	return mg.NewAgg[T](ctx, coll, collName, pipeline)
 }
