@@ -15,9 +15,10 @@ import (
 
 // Re-export core types so users can depend on package maango directly.
 type (
-	Client  = mg.Client
-	Option  = mg.Option
-	Session = mg.TxSession
+	Client           = mg.Client
+	Option           = mg.Option
+	Session          = mg.TxSession
+	FakeClientOption = mg.FakeClientOption
 )
 type (
 	// Collection is the fluent entry point for CRUD and aggregation operations on strongly typed documents.
@@ -43,6 +44,11 @@ type (
 // NewClient proxies to pkg/mongo.NewClient.
 func NewClient(ctx context.Context, opts ...Option) (Client, error) {
 	return mg.NewClient(ctx, opts...)
+}
+
+// NewFakeClient creates a fake client for testing without MongoDB.
+func NewFakeClient(opts ...mg.FakeClientOption) (Client, error) {
+	return mg.NewFakeClient(opts...)
 }
 
 // Option helpers re-exported from the mg package.

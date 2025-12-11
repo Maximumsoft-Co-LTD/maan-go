@@ -2,13 +2,25 @@
 
 ไลบรารี Go สำหรับทำงานกับ MongoDB แบบแยกเส้นทางอ่าน/เขียน รองรับการทำงานกับ struct ที่มี type ชัดเจน พร้อม fluent API สำหรับ CRUD, aggregation และ transaction
 
+## คุณสมบัติหลัก
+
+- **แยกเส้นทางอ่าน/เขียน**: รองรับ MongoDB URI แยกกันสำหรับการอ่านและเขียนข้อมูล
+- **Type Safety**: Collection แบบ strongly typed ด้วย Go generics (`Collection[T]`)
+- **Fluent API**: เมทอดแบบ chainable สำหรับ query, aggregation และ operations
+- **Transaction Support**: รองรับทั้งแบบอัตโนมัติ (`WithTx`) และแบบควบคุมเอง (`StartTx`)
+- **Model Defaults**: เติมค่าเริ่มต้น (ID, timestamps) อัตโนมัติผ่าน interface methods
+- **Testing Support**: มี fake client สำหรับ unit testing โดยไม่ต้องใช้ MongoDB จริง
+
+## ความต้องการระบบ
+
+- **Go 1.22.5+** (ต้องการ generics support)
+- **go.mongodb.org/mongo-driver v1.17.4**
+
 ## ติดตั้ง
 
 ```bash
-go get maan-go
+go get github.com/Maximumsoft-Co-LTD/maan-go
 ```
-
-หรือถ้าเก็บซอร์สไว้ในรีโปเดียวกัน สามารถอ้างอิงโมดูลด้วย path `maan-go` ได้ทันที
 
 ## Quick Start
 
@@ -18,7 +30,7 @@ package main
 import (
     "context"
 
-    maango "maan-go"
+    maango "github.com/Maximumsoft-Co-LTD/maan-go"
     "go.mongodb.org/mongo-driver/bson"
     "go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -40,7 +52,7 @@ func main() {
     }
     defer client.Close()
 
-    bankColl := maango.NewCollection[BankConfig](ctx, client, "bank_config")
+    bankColl := maango.NewColl[BankConfig](ctx, client, "bank_config")
 
     cfg := BankConfig{Name: "demo"}
     if err := bankColl.Create(&cfg); err != nil {
@@ -54,13 +66,13 @@ func main() {
 }
 ```
 
-## Public API Snapshot
+## API Overview
 - `Client` – เชื่อมต่อ MongoDB และแยก client สำหรับอ่าน/เขียน
-- `Collection[T]` – CRUD, aggregation, transaction helper สำหรับ struct ชนิด `T`
-- `ExtendedCollection[T]` – query builder แบบ chainable (`By`, `Where`, `Count`, `Exists`)
+- `Coll[T]` – CRUD, aggregation, transaction helper สำหรับ struct ชนิด `T`
+- `ExColl[T]` – query builder แบบ chainable (`By`, `Where`, `Count`, `Exists`)
 - `SingleResult[T]` / `ManyResult[T]` – fluent query สำหรับ `FindOne` / `FindMany`
 - `Aggregate[T]` – ทำ aggregation pipeline พร้อม helper สำหรับ stream และ raw result
-- `TxSession` – จัดการทรานแซกชันแบบควบคุมเองด้วย pattern `defer tx.Close(&err)`
+- `Session` – จัดการทรานแซกชันแบบควบคุมเองด้วย pattern `defer tx.Close(&err)`
 
 ## การสร้าง Client และ Options
 
@@ -90,13 +102,44 @@ client, err := maango.NewClient(
 
 ## การใช้ Collection
 
-```go
-coll := maango.NewCollection[BankConfig](ctx, client, "bank_config")
+### CRUD Operations
 
-// Insert
+```go
+coll := maango.NewColl[BankConfig](ctx, client, "bank_config")
+
+// 1. CREATE - สร้างเอกสารใหม่
 if err := coll.Create(&BankConfig{Name: "first"}); err != nil {
     panic(err)
 }
+
+// 2. SAVE (Upsert) - อัปเดตถ้ามี หรือสร้างใหม่ถ้าไม่มี
+if err := coll.Save(
+    bson.M{"name": "first"}, 
+    bson.M{"$set": bson.M{"status": "active"}},
+); err != nil {
+    panic(err)
+}
+
+// 3. UPDATE - อัปเดตเฉพาะเอกสารที่มีอยู่แล้ว (ไม่สร้างใหม่)
+if err := coll.Upd(
+    bson.M{"name": "first"}, 
+    bson.M{"$set": bson.M{"last_updated": time.Now()}},
+); err != nil {
+    panic(err)
+}
+
+// 4. DELETE - ลบเอกสาร
+if err := coll.Del(bson.M{"name": "first"}); err != nil {
+    panic(err)
+}
+```
+
+**ความแตกต่างสำคัญ:**
+- **`Create`** - สร้างเอกสารใหม่เท่านั้น (จะ error ถ้ามี duplicate key)
+- **`Save`/`SaveMany`** - **Upsert** = อัปเดตถ้ามี, สร้างใหม่ถ้าไม่มี
+- **`Upd`/`UpdMany`** - **Update Only** = อัปเดตเฉพาะที่มีอยู่แล้ว, ไม่สร้างใหม่
+
+### Query Operations
 
 // Find แบบ fluent
 var cfg BankConfig
@@ -134,10 +177,9 @@ func TestFindDefault(t *testing.T) {
     if err != nil {
         t.Fatalf("fake client: %v", err)
     }
-    repo := repository.NewMongoRepo(context.Background(), client)
-    defer repo.Close()
+    defer client.Close()
 
-    coll := repo.BankConfig(context.Background())
+    coll := maango.NewColl[BankConfig](context.Background(), client, "bank_config")
     // ทดสอบ builder/filter logic ได้โดยไม่ต้องมี MongoDB จริง
     _ = coll.Build(context.Background()).By("Code", "KTB")
 }
@@ -228,18 +270,18 @@ func (a *AuditFields) DefaultUpdatedAt() time.Time {
 }
 ```
 
-ตัวอย่างเต็มดูได้ที่ `internal/entities/bank-config.go`
+ตัวอย่างเต็มดูได้ที่ `internal/mongo/client_integration_test.go`
 
 ## ใช้ร่วมกับ Repository Pattern
 
 ```go
 type BankRepository struct {
-    collection maango.Collection[BankConfig]
+    collection maango.Coll[BankConfig]
 }
 
 func NewBankRepository(ctx context.Context, client maango.Client) *BankRepository {
     return &BankRepository{
-        collection: maango.NewCollection[BankConfig](ctx, client, "bank_config"),
+        collection: maango.NewColl[BankConfig](ctx, client, "bank_config"),
     }
 }
 
@@ -250,12 +292,38 @@ func (r *BankRepository) FindDefault(ctx context.Context) (BankConfig, error) {
 }
 ```
 
-## Integration Test
+## Development
 
-ไฟล์ `pkg/mongo/client_integration_test.go` จำลองการทำงานจริงกับ MongoDB หากไม่ตั้งค่าตัวแปร `MONGO_INTEGRATION_URI` เทสต์จะถูกข้าม
+### การรันเทสต์
 
 ```bash
-MONGO_INTEGRATION_URI="mongodb://localhost:27017" go test ./pkg/mongo -run ClientRoundTrip
+# Unit tests
+go test ./...
+
+# Integration tests (ต้องการ MongoDB)
+MONGO_INTEGRATION_URI="mongodb://localhost:27017" go test ./internal/mongo -run ClientRoundTrip
+
+# ทดสอบพร้อม race detection
+go test -race ./...
 ```
 
-# maan-go
+### Code Quality
+
+```bash
+# Format code
+go fmt ./...
+
+# Vet code
+go vet ./...
+
+# Build library
+go build ./...
+```
+
+## License
+
+MIT License
+
+## Contributing
+
+Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.

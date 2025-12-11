@@ -130,10 +130,11 @@ func (c *collection[T]) CreateMany(docs *[]T) error {
 	return err
 }
 
-// Save is a helper method to save a document in the collection.
+// Save is a helper method to save (upsert) a document in the collection.
+// If document exists, it will be updated. If not, it will be inserted.
 // Example:
 // err := col.Save(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
-// Save will return a new document in the collection with the context set.
+// Save will upsert a document in the collection with the context set.
 // The document is isolated and will not affect the original collection.
 func (c *collection[T]) Save(filter any, update any) error {
 	opt := options.Update().SetUpsert(true)
@@ -141,10 +142,11 @@ func (c *collection[T]) Save(filter any, update any) error {
 	return err
 }
 
-// SaveMany is a helper method to save many documents in the collection.
+// SaveMany is a helper method to save (upsert) many documents in the collection.
+// If documents exist, they will be updated. If not, they will be inserted.
 // Example:
 // err := col.SaveMany(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
-// SaveMany will return a new documents in the collection with the context set.
+// SaveMany will upsert documents in the collection with the context set.
 // The documents are isolated and will not affect the original collection.
 func (c *collection[T]) SaveMany(filter any, update any) error {
 	opt := options.Update().SetUpsert(true)
@@ -152,20 +154,22 @@ func (c *collection[T]) SaveMany(filter any, update any) error {
 	return err
 }
 
-// Upd is a helper method to update a document in the collection.
+// Upd is a helper method to update an existing document in the collection.
+// Will only update documents that already exist, will NOT insert new documents.
 // Example:
 // err := col.Upd(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
-// Upd will return a new document in the collection with the context set.
+// Upd will update existing documents only in the collection with the context set.
 // The document is isolated and will not affect the original collection.
 func (c *collection[T]) Upd(filter any, update any) error {
 	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update))
 	return err
 }
 
-// UpdMany is a helper method to update many documents in the collection.
+// UpdMany is a helper method to update many existing documents in the collection.
+// Will only update documents that already exist, will NOT insert new documents.
 // Example:
 // err := col.UpdMany(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
-// UpdMany will return a new documents in the collection with the context set.
+// UpdMany will update existing documents only in the collection with the context set.
 // The documents are isolated and will not affect the original collection.
 func (c *collection[T]) UpdMany(filter any, update any) error {
 	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update))
