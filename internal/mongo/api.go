@@ -21,17 +21,17 @@ type Client interface {
 type Collection[T any] interface {
 	Agg(pipeline any) Aggregate[T]
 	Build(ctx context.Context) ExtendedCollection[T]
-	Create(doc *T) error
-	CreateMany(docs *[]T) error
+	Create(doc *T, opts ...*options.InsertOneOptions) error
+	CreateMany(docs *[]T, opts ...*options.InsertManyOptions) error
 	Ctx(ctx context.Context) Collection[T]
-	Del(filter any) error
-	Find(filter any) ManyResult[T]
+  Find(filter any) ManyResult[T]
+	Del(filter any, opts ...*options.DeleteOptions) error
 	FindOne(query any) SingleResult[T]
 	FindMany(filter any) ManyResult[T]
 	Name() string
 	RegexFields(q string, fields ...string) ([]T, error)
-	Save(filter any, update any) error
-	SaveMany(filter any, update any) error
+	Save(filter any, update any, opts ...*options.UpdateOptions) error
+	SaveMany(filter any, update any, opts ...*options.UpdateOptions) error
 	TxtFind(q string) ([]T, error)
 	Upd(filter any, update any) error
 	UpdMany(filter any, update any) error

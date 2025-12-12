@@ -102,12 +102,12 @@ func (c *collection[T]) FindMany(filter any) ManyResult[T] {
 // err := col.Create(&testDoc{Name: "foo"})
 // Create will return a new document in the collection with the context set.
 // The document is isolated and will not affect the original collection.
-func (c *collection[T]) Create(doc *T) error {
+func (c *collection[T]) Create(doc *T, opts ...*options.InsertOneOptions) error {
 	if doc == nil {
 		return nil
 	}
 	applyModelDefaults(doc)
-	_, err := c.write.InsertOne(c.getCtx(), doc)
+	_, err := c.write.InsertOne(c.getCtx(), doc, opts...)
 	return err
 }
 
@@ -116,7 +116,7 @@ func (c *collection[T]) Create(doc *T) error {
 // err := col.CreateMany(&[]testDoc{{Name: "foo"}, {Name: "bar"}})
 // CreateMany will return a new documents in the collection with the context set.
 // The documents are isolated and will not affect the original collection.
-func (c *collection[T]) CreateMany(docs *[]T) error {
+func (c *collection[T]) CreateMany(docs *[]T, opts ...*options.InsertManyOptions) error {
 	if docs == nil || len(*docs) == 0 {
 		return nil
 	}
@@ -126,7 +126,7 @@ func (c *collection[T]) CreateMany(docs *[]T) error {
 		applyModelDefaults(&items[i])
 		nd[i] = items[i]
 	}
-	_, err := c.write.InsertMany(c.getCtx(), nd)
+	_, err := c.write.InsertMany(c.getCtx(), nd, opts...)
 	return err
 }
 
@@ -136,9 +136,8 @@ func (c *collection[T]) CreateMany(docs *[]T) error {
 // err := col.Save(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
 // Save will upsert a document in the collection with the context set.
 // The document is isolated and will not affect the original collection.
-func (c *collection[T]) Save(filter any, update any) error {
-	opt := options.Update().SetUpsert(true)
-	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opt)
+func (c *collection[T]) Save(filter any, update any, opts ...*options.UpdateOptions) error {
+	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...)
 	return err
 }
 
@@ -148,9 +147,8 @@ func (c *collection[T]) Save(filter any, update any) error {
 // err := col.SaveMany(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
 // SaveMany will upsert documents in the collection with the context set.
 // The documents are isolated and will not affect the original collection.
-func (c *collection[T]) SaveMany(filter any, update any) error {
-	opt := options.Update().SetUpsert(true)
-	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opt)
+func (c *collection[T]) SaveMany(filter any, update any, opts ...*options.UpdateOptions) error {
+	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...)
 	return err
 }
 
@@ -160,8 +158,8 @@ func (c *collection[T]) SaveMany(filter any, update any) error {
 // err := col.Upd(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
 // Upd will update existing documents only in the collection with the context set.
 // The document is isolated and will not affect the original collection.
-func (c *collection[T]) Upd(filter any, update any) error {
-	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update))
+func (c *collection[T]) Upd(filter any, update any, opts ...*options.UpdateOptions) error {
+	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...)
 	return err
 }
 
@@ -171,8 +169,8 @@ func (c *collection[T]) Upd(filter any, update any) error {
 // err := col.UpdMany(bson.M{"name": "foo"}, bson.M{"$set": bson.M{"name": "bar"}})
 // UpdMany will update existing documents only in the collection with the context set.
 // The documents are isolated and will not affect the original collection.
-func (c *collection[T]) UpdMany(filter any, update any) error {
-	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update))
+func (c *collection[T]) UpdMany(filter any, update any, opts ...*options.UpdateOptions) error {
+	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...)
 	return err
 }
 
@@ -181,8 +179,8 @@ func (c *collection[T]) UpdMany(filter any, update any) error {
 // err := col.Del(bson.M{"name": "foo"})
 // Del will return a new document in the collection with the context set.
 // The document is isolated and will not affect the original collection.
-func (c *collection[T]) Del(filter any) error {
-	_, err := c.write.DeleteOne(c.getCtx(), filter)
+func (c *collection[T]) Del(filter any, opts ...*options.DeleteOptions) error {
+	_, err := c.write.DeleteOne(c.getCtx(), filter, opts...)
 	return err
 }
 
