@@ -24,6 +24,7 @@ type Collection[T any] interface {
 	Create(doc *T, opts ...*options.InsertOneOptions) error
 	CreateMany(docs *[]T, opts ...*options.InsertManyOptions) error
 	Ctx(ctx context.Context) Collection[T]
+  Find(filter any) ManyResult[T]
 	Del(filter any, opts ...*options.DeleteOptions) error
 	FindOne(query any) SingleResult[T]
 	FindMany(filter any) ManyResult[T]
@@ -32,6 +33,8 @@ type Collection[T any] interface {
 	Save(filter any, update any, opts ...*options.UpdateOptions) error
 	SaveMany(filter any, update any, opts ...*options.UpdateOptions) error
 	TxtFind(q string) ([]T, error)
+	Upd(filter any, update any) error
+	UpdMany(filter any, update any) error
 	WithTx(fn func(ctx context.Context) error) error
 	StartTx() (TxSession, error)
 }
@@ -85,6 +88,7 @@ type Aggregate[T any] interface {
 	Raw() ([]bson.M, error)
 	Stream(fn func(ctx context.Context, doc T) error) error
 	Each(fn func(ctx context.Context, doc T) error) error
+	EachRaw(fn func(ctx context.Context, doc bson.M) error) error
 }
 
 // TxSession exposes a MongoDB session used for manual transaction control.
