@@ -265,6 +265,25 @@ func (c *collection[T]) Find(filter any) ManyResult[T] {
 	return NewMany[T](c.getCtx(), c.read, c.collName, filter)
 }
 
+// Watch opens a MongoDB change stream on this collection.
+// ctx controls the lifetime of the stream — cancel it to stop watching.
+// Pass an optional aggregation pipeline to filter or transform change events.
+// Use the returned ChangeStream to set operation-type filters, fullDocument options,
+// resume tokens, and to begin streaming events.
+//
+// Example:
+//
+//	err := coll.Watch(ctx).
+//	    OnIstAndUpd().
+//	    UpdLookup().
+//	    Stream(func(ctx context.Context, e maango.ChangeEvent[MyDoc]) error {
+//	        fmt.Println(e.OperationType, e.FullDocument)
+//	        return nil
+//	    })
+func (c *collection[T]) Watch(ctx context.Context, pipeline ...any) ChangeStream[T] {
+	return NewChangeStream[T](ctx, c.read, c.collName, pipeline)
+}
+
 func copyFilter(original bson.M) bson.M {
 	newFilter := bson.M{}
 	for k, v := range original {
@@ -284,32 +303,3 @@ func toSnakeCase(s string) string {
 	return strings.ToLower(result.String())
 }
 
-// func (c *coll[T]) FindPg(filter any, opt *portOut.PageOpt) ([]T, int64, error) {
-// 	q := c.Find(filter)
-// 	if opt != nil {
-// 		if opt.Limit > 0 {
-// 			q = q.Limit(opt.Limit)
-// 		}
-// 		if opt.Skip > 0 {
-// 			q = q.Skip(opt.Skip)
-// 		}
-// 		if opt.Sort != nil {
-// 			q = q.Sort(opt.Sort)
-// 		}
-// 		if opt.Projection != nil {
-// 			q = q.Proj(opt.Projection)
-// 		}
-// 		if opt.Hint != nil {
-// 			q = q.Hint(opt.Hint)
-// 		}
-// 	}
-// 	items, err := q.All()
-// 	if err != nil {
-// 		return nil, 0, err
-// 	}
-// 	total, err := c.read.CountDocuments(c.ctx, filter)
-// 	if err != nil {
-// 		return nil, 0, err
-// 	}
-// 	return items, total, nil
-// }

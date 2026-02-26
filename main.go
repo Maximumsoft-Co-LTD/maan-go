@@ -31,6 +31,17 @@ type (
 	ManyResult[T any] mg.ManyResult[T]
 	// Aggregate wraps aggregation pipelines with streaming helpers.
 	Aggregate[T any] mg.Aggregate[T]
+	// ChangeStream is a fluent builder for watching real-time change events on a collection.
+	ChangeStream[T any] mg.ChangeStream[T]
+	// ChangeEvent is a typed MongoDB change stream event.
+	ChangeEvent[T any] mg.ChangeEvent[T]
+	// CsEvt (Change Stream Event) bundles a change event and its context into a single
+	// callback argument. Use st.ChangeEvent to access event data and st.Ctx() to get the context.
+	CsEvt[T any] mg.CsEvt[T]
+	// ChangeEventNamespace holds the database and collection name of a change event.
+	ChangeEventNamespace = mg.ChangeEventNamespace
+	// ChangeUpdateDesc describes the fields modified in an update operation.
+	ChangeUpdateDesc = mg.ChangeUpdateDesc
 	// BsonM is a map of string keys to any values.
 	BsonM bson.M
 	// BsonA is a slice of any values.
@@ -85,14 +96,27 @@ func NewColl[T any](ctx context.Context, client Client, name string) Coll[T] {
 	return mg.NewCollection[T](ctx, client, name)
 }
 
-// NewExColl is a helper method to create a new extended collection.
+// NewExColl is a helper method to create a new extended collection using raw mongo.Collection handles.
+// Prefer NewExCollFromClient when you have a Client available, as it avoids exposing mongo internals.
 // Example:
 // exColl := NewExColl[testDoc](context.Background(), read, write, "docs")
 // exColl.By("Name", "foo")
 // exColl.Where(bson.M{"active": true})
-// NewExColl will return a new extended collection instance with the context set.
-// The extended collection is isolated and will not affect the original collection.
 func NewExColl[T any](ctx context.Context, read, write *mongo.Collection, name string) ExColl[T] {
+	return mg.NewExtendedCollection[T](ctx, read, write, name)
+}
+
+// NewExCollFromClient is the preferred way to create an extended collection.
+// It derives the read/write mongo.Collection handles from the Client automatically,
+// keeping the API consistent with NewColl.
+// Example:
+// exColl := NewExCollFromClient[testDoc](context.Background(), client, "docs")
+// exColl.By("Name", "foo")
+// exColl.Where(bson.M{"active": true})
+func NewExCollFromClient[T any](ctx context.Context, client Client, name string) ExColl[T] {
+	dbName := client.DbName()
+	read := client.Read().Database(dbName).Collection(name)
+	write := client.Write().Database(dbName).Collection(name)
 	return mg.NewExtendedCollection[T](ctx, read, write, name)
 }
 

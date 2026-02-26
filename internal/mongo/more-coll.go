@@ -95,7 +95,7 @@ func (c *extendedCollection[T]) Many(results *[]T) error {
 //
 // Save will update the document in the collection that matches the filter.
 func (c *extendedCollection[T]) Save(doc any) error {
-	_, err := c.write.UpdateOne(c.ctx, c.filter, doc)
+	_, err := c.write.UpdateOne(c.ctx, c.filter, ensureUpdateHasTimestamp(doc))
 	return err
 }
 
@@ -108,7 +108,7 @@ func (c *extendedCollection[T]) Save(doc any) error {
 //
 // SaveMany will update many documents in the collection that matches the filter.
 func (c *extendedCollection[T]) SaveMany(update any) error {
-	_, err := c.write.UpdateMany(c.ctx, c.filter, update)
+	_, err := c.write.UpdateMany(c.ctx, c.filter, ensureUpdateHasTimestamp(update))
 	return err
 }
 

@@ -37,6 +37,10 @@ type Collection[T any] interface {
 	UpdMany(filter any, update any, opts ...*options.UpdateOptions) error
 	WithTx(fn func(ctx context.Context) error) error
 	StartTx() (TxSession, error)
+	// Watch opens a change stream on the collection.
+	// ctx controls the lifetime of the stream; cancel it to stop watching.
+	// Pass an optional aggregation pipeline to filter or transform change events.
+	Watch(ctx context.Context, pipeline ...any) ChangeStream[T]
 }
 
 // ExtendedCollection supports building reusable dynamic queries that can be chained.
@@ -98,4 +102,161 @@ type TxSession interface {
 	// Close commits the transaction when *err == nil, otherwise aborts it.
 	// Always call via `defer tx.Close(&err)` to ensure proper cleanup.
 	Close(err *error)
+}
+
+// ChangeEventNamespace holds the database and collection name where a change occurred.
+type ChangeEventNamespace struct {
+	// DB is the name of the database.
+	DB string
+	// Coll is the name of the collection.
+	Coll string
+}
+
+// ChangeUpdateDesc describes which fields were modified in an "update" operation.
+type ChangeUpdateDesc struct {
+	// UpdatedFields is a map of field paths that were set or changed.
+	UpdatedFields bson.M
+	// RemovedFields is the list of field paths that were unset.
+	RemovedFields []string
+}
+
+// CsEvt (Change Stream Event) is the single argument passed to Stream/Each callbacks.
+// It bundles the typed change event data together with the streaming context so the
+// callback has everything it needs without managing two separate parameters.
+//
+// Example:
+//
+//	coll.Watch(ctx).OnIstAndUpd().UpdLookup().
+//	    Stream(func(st maango.CsEvt[Order]) error {
+//	        log.Printf("op=%s id=%v", st.ChangeEvent.OperationType, st.ChangeEvent.DocumentKey)
+//	        if doc := st.ChangeEvent.FullDocument; doc != nil {
+//	            log.Printf("doc=%+v", *doc)
+//	        }
+//	        log.Printf("ctx deadline: %v", st.Ctx())
+//	        return nil
+//	    })
+type CsEvt[T any] struct {
+	// ChangeEvent contains all event data: operation type, document, keys, etc.
+	ChangeEvent ChangeEvent[T]
+	ctx         context.Context
+}
+
+// Ctx returns the context that controls the lifetime of the change stream.
+// Use it to propagate deadlines or pass to downstream calls inside the callback.
+func (s CsEvt[T]) Ctx() context.Context { return s.ctx }
+
+// ChangeEvent represents a single MongoDB change stream event with a typed FullDocument.
+// The event mirrors the MongoDB change event document returned by the $changeStream aggregation stage.
+//
+// Fields availability by operation type:
+//
+//	insert  → FullDocument is always set
+//	update  → FullDocument is nil unless UpdLookup() / FullDocRequired() is used; UpdateDesc is set
+//	replace → FullDocument is always set
+//	delete  → FullDocument is always nil; DocumentKey contains the deleted _id
+type ChangeEvent[T any] struct {
+	// ResumeToken is the opaque token that can be passed to ResumeAfter/StartAfter
+	// to restart the stream from exactly this point after an interruption.
+	ResumeToken bson.M
+	// OperationType indicates what happened: "insert", "update", "replace",
+	// "delete", "drop", "rename", "dropDatabase", or "invalidate".
+	OperationType string
+	// FullDocument is the typed version of the document after the change.
+	// It is nil for "delete" events and for "update" events unless
+	// UpdLookup() or FullDocRequired() was set on the stream builder.
+	FullDocument *T
+	// DocumentKey holds the _id (and shard key if applicable) of the affected document.
+	DocumentKey bson.M
+	// Namespace identifies which database and collection produced this event.
+	Namespace ChangeEventNamespace
+	// UpdateDesc is only set for "update" operations. It lists the fields that
+	// were changed (UpdatedFields) and the fields that were removed (RemovedFields).
+	UpdateDesc *ChangeUpdateDesc
+}
+
+// ChangeStream is a fluent builder for watching real-time change events on a MongoDB collection.
+// Call Watch on a Collection to obtain a ChangeStream, chain option methods, then call
+// Stream or Each to begin consuming events.
+//
+// Requires MongoDB replica set or sharded cluster (change streams are not available on standalone).
+//
+// Basic example — react to every change:
+//
+//	err := coll.Watch(ctx).
+//	    Stream(func(st maango.CsEvt[Order]) error {
+//	        fmt.Println(st.ChangeEvent.OperationType)
+//	        return nil
+//	    })
+//
+// Filtered example — inserts and updates, with full document on updates:
+//
+//	err := coll.Watch(ctx).
+//	    OnIstAndUpd().
+//	    UpdLookup().
+//	    Stream(func(st maango.CsEvt[Order]) error {
+//	        fmt.Printf("op=%s doc=%+v\n",
+//	            st.ChangeEvent.OperationType,
+//	            st.ChangeEvent.FullDocument)
+//	        return nil
+//	    })
+//
+// Resume after interruption:
+//
+//	var lastToken bson.M
+//	coll.Watch(ctx).Stream(func(st maango.CsEvt[Order]) error {
+//	    lastToken = st.ChangeEvent.ResumeToken
+//	    return nil
+//	})
+//	// ... restart later:
+//	coll.Watch(ctx).ResumeAfter(lastToken).Stream(handler)
+type ChangeStream[T any] interface {
+	// On filters events to the specified operation types.
+	// Valid values: "insert", "update", "replace", "delete", "drop", "rename", "invalidate".
+	//
+	// Example: .On("insert", "delete")
+	On(operationTypes ...string) ChangeStream[T]
+
+	// OnIst filters for "insert" events only.
+	OnIst() ChangeStream[T]
+	// OnUpd filters for "update" events only.
+	OnUpd() ChangeStream[T]
+	// OnDel filters for "delete" events only.
+	OnDel() ChangeStream[T]
+	// OnRep filters for "replace" events only.
+	OnRep() ChangeStream[T]
+	// OnIstAndUpd filters for "insert" and "update" events (most common combination).
+	OnIstAndUpd() ChangeStream[T]
+
+	// FullDoc sets the fullDocument option controlling when the full document is returned.
+	// Valid values: "default", "updateLookup", "whenAvailable", "required".
+	FullDoc(option string) ChangeStream[T]
+	// UpdLookup sets fullDocument to "updateLookup": the driver performs an extra read to
+	// fetch the full document for every update event. FullDocument will be non-nil for updates.
+	UpdLookup() ChangeStream[T]
+	// FullDocRequired sets fullDocument to "required": the server errors if the full document
+	// cannot be provided (e.g. document was deleted between the change and the lookup).
+	FullDocRequired() ChangeStream[T]
+
+	// ResumeAfter resumes the stream starting after the given resume token.
+	// Use st.ChangeEvent.ResumeToken from a previous callback to obtain the token.
+	ResumeAfter(token bson.M) ChangeStream[T]
+	// StartAfter is like ResumeAfter but can resume even after an "invalidate" event.
+	StartAfter(token bson.M) ChangeStream[T]
+	// Opts applies raw ChangeStreamOptions, merged on top of any builder settings.
+	Opts(o *options.ChangeStreamOptions) ChangeStream[T]
+
+	// Stream opens the change stream and calls fn for every incoming event until fn
+	// returns a non-nil error or the context passed to Watch is cancelled.
+	//
+	// Example:
+	//
+	//	err := coll.Watch(ctx).OnIstAndUpd().UpdLookup().
+	//	    Stream(func(st maango.CsEvt[Order]) error {
+	//	        fmt.Println(st.ChangeEvent.OperationType, st.ChangeEvent.FullDocument)
+	//	        return nil
+	//	    })
+	Stream(fn func(st CsEvt[T]) error) error
+
+	// Each is an alias for Stream.
+	Each(fn func(st CsEvt[T]) error) error
 }

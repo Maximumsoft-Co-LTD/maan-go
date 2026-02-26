@@ -33,6 +33,7 @@ func NewTransactionSession(ctx context.Context, client Client) (TxSession, error
 	return &transactionSession{
 		session:    s,
 		sessionCtx: mg.NewSessionContext(ctx, s),
+		ctx:        ctx,
 	}, nil
 }
 

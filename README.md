@@ -73,6 +73,8 @@ func main() {
 - `SingleResult[T]` / `ManyResult[T]` – fluent query สำหรับ `FindOne` / `FindMany`
 - `Aggregate[T]` – ทำ aggregation pipeline พร้อม helper สำหรับ stream และ raw result
 - `Session` – จัดการทรานแซกชันแบบควบคุมเองด้วย pattern `defer tx.Close(&err)`
+- `ChangeStream[T]` – รับ real-time change events ผ่าน MongoDB Change Streams (`Watch`)
+- `CsEvt[T]` – callback argument ของ Stream/Each รวม event data และ context ไว้ในที่เดียว
 
 ## การสร้าง Client และ Options
 
@@ -205,6 +207,82 @@ for _, doc := range raw {
     fmt.Println(doc["_id"], doc["count"])
 }
 ```
+
+### Change Streams (Real-time Events)
+
+Change Streams ช่วยให้ application รับ real-time events เมื่อมีการ insert/update/delete ใน collection โดยไม่ต้อง polling — ต้องการ MongoDB replica set หรือ sharded cluster
+
+#### โครงสร้าง Callback
+
+```go
+// CsEvt[T] คือ argument เดียวของ callback ทุก Stream/Each
+// รวม event data และ context ไว้ในที่เดียว
+type CsEvt[T any] struct {
+    ChangeEvent ChangeEvent[T] // ข้อมูล event ทั้งหมด
+}
+func (s CsEvt[T]) Ctx() context.Context // context ที่ควบคุม lifetime ของ stream
+```
+
+| Field / Method | ความหมาย |
+|---|---|
+| `st.ChangeEvent.OperationType` | "insert" / "update" / "replace" / "delete" / ... |
+| `st.ChangeEvent.FullDocument` | `*T` — typed document (nil สำหรับ delete) |
+| `st.ChangeEvent.DocumentKey` | `bson.M` ที่มี `_id` ของ document ที่เปลี่ยน |
+| `st.ChangeEvent.UpdateDesc` | fields ที่เปลี่ยน (เฉพาะ update) |
+| `st.ChangeEvent.ResumeToken` | token สำหรับ resume stream |
+| `st.Ctx()` | context ของ stream |
+
+#### ตัวอย่าง: Watch ทุก event
+
+```go
+coll := maango.NewColl[Order](ctx, client, "orders")
+
+err := coll.Watch(ctx).
+    Stream(func(st maango.CsEvt[Order]) error {
+        fmt.Println(st.ChangeEvent.OperationType, st.ChangeEvent.DocumentKey)
+        return nil
+    })
+```
+
+#### ตัวอย่าง: Watch เฉพาะ insert + update พร้อม full document
+
+```go
+err := coll.Watch(ctx).
+    OnIstAndUpd().   // กรอง insert และ update เท่านั้น
+    UpdLookup().     // ดึง full document สำหรับ update events ด้วย
+    Stream(func(st maango.CsEvt[Order]) error {
+        ev := st.ChangeEvent
+        fmt.Printf("op=%s doc=%+v\n", ev.OperationType, ev.FullDocument)
+        return nil
+    })
+```
+
+#### ตัวอย่าง: Resume หลังจาก interruption
+
+```go
+var lastToken bson.M
+
+// รอบแรก — เก็บ resume token ทุก event
+coll.Watch(ctx).Stream(func(st maango.CsEvt[Order]) error {
+    lastToken = st.ChangeEvent.ResumeToken
+    return nil
+})
+
+// restart ครั้งถัดไป — ต่อจากจุดที่หยุด
+coll.Watch(ctx).ResumeAfter(lastToken).Stream(handler)
+```
+
+#### Shortcut methods ทั้งหมด
+
+| Method | เทียบเท่า |
+|---|---|
+| `.OnIst()` | `.On("insert")` |
+| `.OnUpd()` | `.On("update")` |
+| `.OnDel()` | `.On("delete")` |
+| `.OnRep()` | `.On("replace")` |
+| `.OnIstAndUpd()` | `.On("insert", "update")` |
+| `.UpdLookup()` | `.FullDoc("updateLookup")` |
+| `.FullDocRequired()` | `.FullDoc("required")` |
 
 ### Transaction
 

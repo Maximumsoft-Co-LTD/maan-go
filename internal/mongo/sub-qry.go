@@ -55,10 +55,10 @@ func NewSingle[T any](ctx context.Context, coll *mongo.Collection, collName stri
 	}
 }
 
-func (s *single[T]) Proj(p any) SingleResult[T]                     { s.proj = p; return s }
-func (s *single[T]) Sort(v any) SingleResult[T]                     { s.sort = v; return s }
-func (s *single[T]) Hint(v any) SingleResult[T]                     { s.hint = v; return s }
-func (s *single[T]) Opts(o *options.FindOneOptions) SingleResult[T] { s.extra = o; return s }
+func (s *single[T]) Proj(p any) SingleResult[T]                     { next := *s; next.proj = p; return &next }
+func (s *single[T]) Sort(v any) SingleResult[T]                     { next := *s; next.sort = v; return &next }
+func (s *single[T]) Hint(v any) SingleResult[T]                     { next := *s; next.hint = v; return &next }
+func (s *single[T]) Opts(o *options.FindOneOptions) SingleResult[T] { next := *s; next.extra = o; return &next }
 func (s *single[T]) build() *options.FindOneOptions {
 	fo := options.FindOne()
 	if s.proj != nil {
@@ -99,13 +99,13 @@ func NewMany[T any](ctx context.Context, coll *mongo.Collection, collName string
 	}
 }
 
-func (m *many[T]) Proj(p any) ManyResult[T]                   { m.proj = p; return m }
-func (m *many[T]) Sort(s any) ManyResult[T]                   { m.sort = s; return m }
-func (m *many[T]) Hint(h any) ManyResult[T]                   { m.hint = h; return m }
-func (m *many[T]) Limit(n int64) ManyResult[T]                { m.limit = n; return m }
-func (m *many[T]) Skip(n int64) ManyResult[T]                 { m.skip = n; return m }
-func (m *many[T]) Bsz(n int32) ManyResult[T]                  { m.batch = &n; return m }
-func (m *many[T]) Opts(fo *options.FindOptions) ManyResult[T] { m.extra = fo; return m }
+func (m *many[T]) Proj(p any) ManyResult[T]                   { next := *m; next.proj = p; return &next }
+func (m *many[T]) Sort(s any) ManyResult[T]                   { next := *m; next.sort = s; return &next }
+func (m *many[T]) Hint(h any) ManyResult[T]                   { next := *m; next.hint = h; return &next }
+func (m *many[T]) Limit(n int64) ManyResult[T]                { next := *m; next.limit = n; return &next }
+func (m *many[T]) Skip(n int64) ManyResult[T]                 { next := *m; next.skip = n; return &next }
+func (m *many[T]) Bsz(n int32) ManyResult[T]                  { next := *m; next.batch = &n; return &next }
+func (m *many[T]) Opts(fo *options.FindOptions) ManyResult[T] { next := *m; next.extra = fo; return &next }
 func (m *many[T]) build() *options.FindOptions {
 	fo := options.Find()
 	if m.limit > 0 {
@@ -284,6 +284,21 @@ func mergeFindOptions(fo *options.FindOptions, opts ...*options.FindOptions) *op
 		if opt.ShowRecordID != nil {
 			fo.ShowRecordID = opt.ShowRecordID
 		}
+		if opt.Sort != nil {
+			fo.Sort = opt.Sort
+		}
+		if opt.Projection != nil {
+			fo.Projection = opt.Projection
+		}
+		if opt.Hint != nil {
+			fo.Hint = opt.Hint
+		}
+		if opt.Limit != nil {
+			fo.Limit = opt.Limit
+		}
+		if opt.Skip != nil {
+			fo.Skip = opt.Skip
+		}
 	}
 	return fo
 }
@@ -319,6 +334,15 @@ func mergeFindOneOptions(fo *options.FindOneOptions, opts ...*options.FindOneOpt
 		}
 		if opt.ShowRecordID != nil {
 			fo.ShowRecordID = opt.ShowRecordID
+		}
+		if opt.Sort != nil {
+			fo.Sort = opt.Sort
+		}
+		if opt.Projection != nil {
+			fo.Projection = opt.Projection
+		}
+		if opt.Hint != nil {
+			fo.Hint = opt.Hint
 		}
 	}
 
