@@ -142,6 +142,7 @@ const (
 	kindRead
 )
 
+// connect dials a MongoDB server at uri and applies kind-specific options (read preference / write concern).
 func connect(timedCtx context.Context, uri string, cfg *clientConfig, kind connectionKind) (*mg.Client, error) {
 	clientOpts := options.Client().ApplyURI(uri)
 	for _, mutator := range cfg.clientOpts {
@@ -165,6 +166,8 @@ func connect(timedCtx context.Context, uri string, cfg *clientConfig, kind conne
 	return cli, nil
 }
 
+// Close disconnects both write and read clients. When read and write share the
+// same underlying *mg.Client, only one disconnect call is issued.
 func (c *client) Close() error {
 	var closeErr error
 	if c.write != nil {

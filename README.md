@@ -1,26 +1,30 @@
 # maan-go
 
-ไลบรารี Go สำหรับทำงานกับ MongoDB แบบแยกเส้นทางอ่าน/เขียน รองรับการทำงานกับ struct ที่มี type ชัดเจน พร้อม fluent API สำหรับ CRUD, aggregation และ transaction
+`maan-go` (package `maango`) เป็น Go library สำหรับ MongoDB ที่ให้ API แบบ fluent/chainable และ type-safe ผ่าน Go generics รองรับ read/write separation, transaction, aggregation pipeline และ real-time change streams
 
 ## คุณสมบัติหลัก
 
-- **แยกเส้นทางอ่าน/เขียน**: รองรับ MongoDB URI แยกกันสำหรับการอ่านและเขียนข้อมูล
-- **Type Safety**: Collection แบบ strongly typed ด้วย Go generics (`Collection[T]`)
-- **Fluent API**: เมทอดแบบ chainable สำหรับ query, aggregation และ operations
-- **Transaction Support**: รองรับทั้งแบบอัตโนมัติ (`WithTx`) และแบบควบคุมเอง (`StartTx`)
-- **Model Defaults**: เติมค่าเริ่มต้น (ID, timestamps) อัตโนมัติผ่าน interface methods
-- **Testing Support**: มี fake client สำหรับ unit testing โดยไม่ต้องใช้ MongoDB จริง
+- **Type-safe generics** — `Collection[T]`, `ManyResult[T]`, `Aggregate[T]`, `ChangeStream[T]`
+- **Read/Write Separation** — ส่ง `WithWriteURI` + `WithReadURI` แยกกัน, library route อัตโนมัติ
+- **Fluent builder** — chain methods ได้ทุกขั้นตอน เช่น `.Find(f).Sort(s).Limit(10).All()`
+- **Auto model defaults** — inject ObjectID, created_at, updated_at อัตโนมัติ
+- **Transaction** — ทั้งแบบ auto (`WithTx`) และ manual (`StartTx`)
+- **Aggregation pipeline** — รองรับทุก stage พร้อม streaming
+- **Change Streams** — real-time event watching พร้อม operation filter ครบ
+- **FakeClient** สำหรับ unit test ไม่ต้องใช้ MongoDB จริง
 
 ## ความต้องการระบบ
 
-- **Go 1.22.5+** (ต้องการ generics support)
-- **go.mongodb.org/mongo-driver v1.17.4**
+- Go 1.21+
+- MongoDB Driver v1.x (`go.mongodb.org/mongo-driver`)
 
 ## ติดตั้ง
 
 ```bash
 go get github.com/Maximumsoft-Co-LTD/maan-go
 ```
+
+---
 
 ## Quick Start
 
@@ -29,379 +33,683 @@ package main
 
 import (
     "context"
+    "fmt"
+    "log"
 
     maango "github.com/Maximumsoft-Co-LTD/maan-go"
     "go.mongodb.org/mongo-driver/bson"
     "go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-type BankConfig struct {
-    ID   primitive.ObjectID `bson:"_id"`
-    Name string             `bson:"name"`
+type User struct {
+    ID    primitive.ObjectID `bson:"_id,omitempty"`
+    Name  string             `bson:"name"`
+    Email string             `bson:"email"`
 }
 
 func main() {
     ctx := context.Background()
-    client, err := maango.NewClient(
-        ctx,
+
+    client, err := maango.NewClient(ctx,
         maango.WithWriteURI("mongodb://localhost:27017"),
-        maango.WithDatabase("example"),
+        maango.WithDatabase("myapp"),
     )
     if err != nil {
-        panic(err)
+        log.Fatal(err)
     }
     defer client.Close()
 
-    bankColl := maango.NewColl[BankConfig](ctx, client, "bank_config")
+    users := maango.NewColl[User](ctx, client, "users")
 
-    cfg := BankConfig{Name: "demo"}
-    if err := bankColl.Create(&cfg); err != nil {
-        panic(err)
+    // สร้าง document
+    u := &User{Name: "Alice", Email: "alice@example.com"}
+    if err := users.Create(u); err != nil {
+        log.Fatal(err)
     }
 
-    var stored BankConfig
-    if err := bankColl.FindOne(bson.M{"_id": cfg.ID}).Result(&stored); err != nil {
-        panic(err)
-    }
+    // ค้นหา document เดียว
+    var result User
+    err = users.FindOne(bson.M{"name": "Alice"}).Result(&result)
+    fmt.Printf("found: %+v\n", result)
+
+    // ค้นหาหลาย documents
+    docs, err := users.Find(nil).Sort(bson.M{"name": 1}).All()
+    _ = docs
+
+    // ลบ
+    _ = users.Del(bson.M{"name": "Alice"})
 }
 ```
 
-## API Overview
-- `Client` – เชื่อมต่อ MongoDB และแยก client สำหรับอ่าน/เขียน
-- `Coll[T]` – CRUD, aggregation, transaction helper สำหรับ struct ชนิด `T`
-- `ExColl[T]` – query builder แบบ chainable (`By`, `Where`, `Count`, `Exists`)
-- `SingleResult[T]` / `ManyResult[T]` – fluent query สำหรับ `FindOne` / `FindMany`
-- `Aggregate[T]` – ทำ aggregation pipeline พร้อม helper สำหรับ stream และ raw result
-- `Session` – จัดการทรานแซกชันแบบควบคุมเองด้วย pattern `defer tx.Close(&err)`
-- `ChangeStream[T]` – รับ real-time change events ผ่าน MongoDB Change Streams (`Watch`)
-- `CsEvt[T]` – callback argument ของ Stream/Each รวม event data และ context ไว้ในที่เดียว
+---
 
-## การสร้าง Client และ Options
+## API Reference
+
+### 1. Client — การเชื่อมต่อ
+
+#### `NewClient`
 
 ```go
-client, err := maango.NewClient(
-    ctx,
-    maango.WithWriteURI("mongodb://writer:27017"),
-    maango.WithReadURI("mongodb://reader:27017"), // ไม่ระบุจะใช้ URI เขียน
-    maango.WithDatabase("example"),
-    maango.WithTimeout(30*time.Second),
-    maango.WithReadPreference(readpref.SecondaryPreferred()),
-    maango.WithWriteConcern(writeconcern.New(writeconcern.WMajority())),
-    maango.WithClientOptions(func(opts *options.ClientOptions) {
-        opts.SetAppName("potja-demo")
-    }),
-)
+func NewClient(ctx context.Context, opts ...Option) (Client, error)
 ```
 
-ตัวเลือกที่รองรับ:
-- `WithWriteURI` *(จำเป็น)* – URI สำหรับ client ฝั่งเขียน
-- `WithReadURI` – URI สำหรับ client ฝั่งอ่าน
-- `WithDatabase` *(จำเป็น)* – ตั้งชื่อฐานข้อมูลที่จะใช้
-- `WithTimeout` – timeout ขณะเชื่อมต่อ (ค่าเริ่มต้น 60s)
-- `WithReadPreference` – ตั้ง read preference ของฝั่งอ่าน
-- `WithWriteConcern` – ตั้ง write concern ของฝั่งเขียน
-- `WithClientOptions` – mutator สำหรับ `mongo/options.ClientOptions` (สามารถใส่หลายครั้งได้)
+สร้าง MongoDB client พร้อม read/write separation
 
-## การใช้ Collection
-
-### CRUD Operations
+#### `NewFakeClient`
 
 ```go
-coll := maango.NewColl[BankConfig](ctx, client, "bank_config")
-
-// 1. CREATE - สร้างเอกสารใหม่
-if err := coll.Create(&BankConfig{Name: "first"}); err != nil {
-    panic(err)
-}
-
-// 2. SAVE (Upsert) - อัปเดตถ้ามี หรือสร้างใหม่ถ้าไม่มี
-if err := coll.Save(
-    bson.M{"name": "first"}, 
-    bson.M{"$set": bson.M{"status": "active"}},
-); err != nil {
-    panic(err)
-}
-
-// 3. UPDATE - อัปเดตเฉพาะเอกสารที่มีอยู่แล้ว (ไม่สร้างใหม่)
-if err := coll.Upd(
-    bson.M{"name": "first"}, 
-    bson.M{"$set": bson.M{"last_updated": time.Now()}},
-); err != nil {
-    panic(err)
-}
-
-// 4. DELETE - ลบเอกสาร
-if err := coll.Del(bson.M{"name": "first"}); err != nil {
-    panic(err)
-}
+func NewFakeClient(opts ...FakeClientOption) (Client, error)
 ```
 
-**ความแตกต่างสำคัญ:**
-- **`Create`** - สร้างเอกสารใหม่เท่านั้น (จะ error ถ้ามี duplicate key)
-- **`Save`/`SaveMany`** - **Upsert** = อัปเดตถ้ามี, สร้างใหม่ถ้าไม่มี
-- **`Upd`/`UpdMany`** - **Update Only** = อัปเดตเฉพาะที่มีอยู่แล้ว, ไม่สร้างใหม่
+สร้าง fake client สำหรับ unit test (ไม่ต่อ MongoDB จริง)
 
-### Query Operations
+#### Option functions
 
-// Find แบบ fluent
-var cfg BankConfig
-if err := coll.
-    FindOne(bson.M{"name": "first"}).
-    Proj(bson.M{"_id": 1, "name": 1}).
-    Result(&cfg); err != nil {
-    panic(err)
-}
-
-// Find หลายเรคคอร์ด พร้อม sort/limit
-items, err := coll.
-    FindMany(bson.M{"is_active": true}).
-    Sort(bson.M{"created_at": -1}).
-    Limit(10).
-    All()
-```
-
-### Query Builder แบบ chainable
-
-```go
-var result []BankConfig
-err := coll.
-    Build(ctx).
-    By("Code", "KTB").
-    Where(bson.M{"status": "active"}).
-    Many(&result)
-```
-
-### Example: unit test แบบไม่ต้องต่อ Mongo จริง
-
-```go
-func TestFindDefault(t *testing.T) {
-    client, err := maango.NewFakeClient()
-    if err != nil {
-        t.Fatalf("fake client: %v", err)
-    }
-    defer client.Close()
-
-    coll := maango.NewColl[BankConfig](context.Background(), client, "bank_config")
-    // ทดสอบ builder/filter logic ได้โดยไม่ต้องมี MongoDB จริง
-    _ = coll.Build(context.Background()).By("Code", "KTB")
-}
-```
-
-### Aggregation
-
-```go
-pipeline := []bson.M{
-    {"$match": bson.M{"is_active": true}},
-    {"$group": bson.M{"_id": "$status", "count": bson.M{"$sum": 1}}},
-}
-
-raw, err := coll.
-    Agg(pipeline).
-    Disk(true).
-    Raw()
-if err != nil {
-    panic(err)
-}
-for _, doc := range raw {
-    // ต้อง import "fmt"
-    fmt.Println(doc["_id"], doc["count"])
-}
-```
-
-### Change Streams (Real-time Events)
-
-Change Streams ช่วยให้ application รับ real-time events เมื่อมีการ insert/update/delete ใน collection โดยไม่ต้อง polling — ต้องการ MongoDB replica set หรือ sharded cluster
-
-#### โครงสร้าง Callback
-
-```go
-// CsEvt[T] คือ argument เดียวของ callback ทุก Stream/Each
-// รวม event data และ context ไว้ในที่เดียว
-type CsEvt[T any] struct {
-    ChangeEvent ChangeEvent[T] // ข้อมูล event ทั้งหมด
-}
-func (s CsEvt[T]) Ctx() context.Context // context ที่ควบคุม lifetime ของ stream
-```
-
-| Field / Method | ความหมาย |
+| Function | คำอธิบาย |
 |---|---|
-| `st.ChangeEvent.OperationType` | "insert" / "update" / "replace" / "delete" / ... |
-| `st.ChangeEvent.FullDocument` | `*T` — typed document (nil สำหรับ delete) |
-| `st.ChangeEvent.DocumentKey` | `bson.M` ที่มี `_id` ของ document ที่เปลี่ยน |
-| `st.ChangeEvent.UpdateDesc` | fields ที่เปลี่ยน (เฉพาะ update) |
-| `st.ChangeEvent.ResumeToken` | token สำหรับ resume stream |
-| `st.Ctx()` | context ของ stream |
+| `WithWriteURI(uri string)` | URI สำหรับ write (required) |
+| `WithReadURI(uri string)` | URI สำหรับ read (ถ้าไม่ set จะใช้ write URI) |
+| `WithDatabase(name string)` | ชื่อ database (required) |
+| `WithTimeout(d time.Duration)` | connection timeout (default 60s) |
+| `WithReadPreference(rp)` | read preference ของ read client |
+| `WithWriteConcern(wc)` | write concern ของ write client |
+| `WithClientOptions(fn)` | mutate `*options.ClientOptions` ก่อน dial |
 
-#### ตัวอย่าง: Watch ทุก event
+#### FakeClient option functions
+
+| Function | คำอธิบาย |
+|---|---|
+| `WithFakeDatabase(name string)` | ชื่อ database สำหรับ fake client (default: "testdb") |
+| `WithFakeURI(uri string)` | URI ที่เก็บใน fake client (ไม่ dial จริง) |
+
+#### Client interface methods
+
+| Method | คำอธิบาย |
+|---|---|
+| `Write() *mongo.Client` | คืน client ที่ใช้ write |
+| `Read() *mongo.Client` | คืน client ที่ใช้ read |
+| `DbName() string` | ชื่อ database |
+| `Close() error` | ปิด connection ทั้งคู่ |
+
+---
+
+### 2. Collection[T] — CRUD หลัก
+
+#### สร้าง Collection
 
 ```go
-coll := maango.NewColl[Order](ctx, client, "orders")
+// สร้างจาก Client (แนะนำ)
+users := maango.NewColl[User](ctx, client, "users")
+
+// สร้าง extended collection จาก Client
+users := maango.NewExCollFromClient[User](ctx, client, "users")
+```
+
+#### Context และ Build
+
+| Method | คำอธิบาย |
+|---|---|
+| `.Ctx(ctx)` | คืน shallow copy ที่ bind context ใหม่ |
+| `.Build(ctx)` | คืน `ExtendedCollection[T]` bound กับ ctx |
+| `.Name()` | คืนชื่อ collection |
+
+#### Create
+
+```go
+// สร้าง document เดียว
+err := coll.Create(&doc)
+err := coll.Create(&doc, options.InsertOne().SetComment("x"))
+
+// สร้างหลาย documents
+err := coll.CreateMany(&docs)
+```
+
+`Create`/`CreateMany` เรียก model default hooks อัตโนมัติ (`DefaultId`, `DefaultCreatedAt`, `DefaultUpdatedAt`)
+
+#### Find
+
+```go
+// ค้นหา document เดียว → คืน SingleResult[T]
+result := coll.FindOne(bson.M{"_id": id})
+
+// ค้นหาหลาย documents → คืน ManyResult[T]
+result := coll.Find(bson.M{"active": true})
+result := coll.FindMany(bson.M{"active": true})
+// Find และ FindMany เหมือนกัน
+```
+
+#### Save (Upsert)
+
+```go
+// Save = UpdateOne + Upsert:true — ถ้าไม่เจอจะ insert
+err := coll.Save(filter, update)
+// SaveMany = UpdateMany + Upsert:true
+err := coll.SaveMany(filter, update)
+```
+
+#### Upd (Update only)
+
+```go
+// Upd = UpdateOne ไม่ insert ถ้าไม่เจอ
+err := coll.Upd(filter, update)
+// UpdMany = UpdateMany ไม่ insert
+err := coll.UpdMany(filter, update)
+```
+
+#### Del
+
+```go
+// ลบ document แรกที่ match
+err := coll.Del(filter)
+```
+
+#### Aggregation
+
+```go
+// คืน Aggregate[T]
+agg := coll.Agg(mongo.Pipeline{
+    {{"$match", bson.M{"active": true}}},
+    {{"$group", bson.M{"_id": "$category", "count": bson.M{"$sum": 1}}}},
+})
+```
+
+#### Text / Regex Search
+
+```go
+// Full-text search (ต้องมี text index)
+results, err := coll.TxtFind("golang mongodb")
+
+// Regex search ข้ามหลาย fields (case-insensitive)
+results, err := coll.RegexFields("alice", "name", "email")
+```
+
+#### Transaction
+
+```go
+// Auto commit/rollback
+err := coll.WithTx(func(ctx context.Context) error {
+    if err := coll.Ctx(ctx).Create(&doc); err != nil {
+        return err
+    }
+    return coll.Ctx(ctx).Del(bson.M{"_id": oldID})
+})
+
+// Manual transaction
+tx, err := coll.StartTx()
+if err != nil { return err }
+defer tx.Close(&err)
+ctx := tx.Ctx()
+err = coll.Ctx(ctx).Create(&doc)
+```
+
+---
+
+### 3. SingleResult[T]
+
+```go
+var doc User
+err := coll.FindOne(bson.M{"_id": id}).
+    Proj(bson.M{"name": 1, "email": 1}).
+    Sort(bson.M{"name": 1}).
+    Hint(bson.M{"name": 1}).
+    Opts(options.FindOne().SetMaxTime(5*time.Second)).
+    Result(&doc)
+```
+
+| Method | คำอธิบาย |
+|---|---|
+| `.Proj(p any)` | กำหนด projection |
+| `.Sort(s any)` | กำหนด sort |
+| `.Hint(h any)` | กำหนด index hint |
+| `.Opts(fo *options.FindOneOptions)` | merge raw options (override ทับ builder) |
+| `.Result(out *T) error` | execute และ decode ผลลัพธ์ คืน `mongo.ErrNoDocuments` ถ้าไม่เจอ |
+
+---
+
+### 4. ManyResult[T]
+
+```go
+var docs []User
+err := coll.Find(bson.M{"active": true}).
+    Sort(bson.M{"name": 1}).
+    Limit(20).
+    Skip(40).
+    Proj(bson.M{"name": 1}).
+    Bsz(100).
+    Result(&docs)
+
+// All() — คืน slice โดยตรง
+docs, err := coll.Find(nil).All()
+
+// Streaming (ทีละ document — ประหยัด memory)
+err := coll.Find(nil).Stream(func(ctx context.Context, doc User) error {
+    fmt.Println(doc.Name)
+    return nil
+})
+
+// Count (ไม่สนใจ Limit/Skip)
+count, err := coll.Find(bson.M{"active": true}).Cnt()
+```
+
+| Method | คำอธิบาย |
+|---|---|
+| `.Proj(p any)` | projection |
+| `.Sort(s any)` | sort |
+| `.Hint(h any)` | index hint |
+| `.Limit(n int64)` | จำกัดจำนวน |
+| `.Skip(n int64)` | ข้ามต้น n ตัว |
+| `.Bsz(n int32)` | cursor batch size |
+| `.Opts(fo *options.FindOptions)` | merge raw options |
+| `.All() ([]T, error)` | execute คืน slice |
+| `.Result(out *[]T) error` | execute decode ลง out |
+| `.Stream(fn) error` | streaming ทีละตัว |
+| `.Each(fn) error` | alias ของ Stream |
+| `.Cnt() (int64, error)` | นับ documents |
+
+---
+
+### 5. Aggregate[T]
+
+```go
+type Summary struct {
+    ID    string `bson:"_id"`
+    Total int    `bson:"total"`
+}
+
+pipeline := mongo.Pipeline{
+    {{"$match", bson.M{"active": true}}},
+    {{"$group", bson.M{"_id": "$category", "total": bson.M{"$sum": 1}}}},
+}
+
+// คืน typed results
+results, err := coll.Agg(pipeline).All()
+
+// คืน raw bson.M
+raw, err := coll.Agg(pipeline).Raw()
+
+// Streaming typed
+err := coll.Agg(pipeline).
+    Disk(true).
+    Bsz(500).
+    Each(func(ctx context.Context, doc Summary) error {
+        fmt.Println(doc.ID, doc.Total)
+        return nil
+    })
+
+// Streaming raw
+err := coll.Agg(pipeline).EachRaw(func(ctx context.Context, doc bson.M) error {
+    fmt.Println(doc)
+    return nil
+})
+```
+
+| Method | คำอธิบาย |
+|---|---|
+| `.Disk(b bool)` | เปิด/ปิด allowDiskUse |
+| `.Bsz(n int32)` | cursor batch size |
+| `.Opts(ao *options.AggregateOptions)` | merge raw options |
+| `.All() ([]T, error)` | execute คืน typed slice |
+| `.Result(out *[]T) error` | execute decode ลง out |
+| `.Raw() ([]bson.M, error)` | execute คืน raw slice |
+| `.Stream(fn) error` | streaming typed |
+| `.Each(fn) error` | alias ของ Stream |
+| `.EachRaw(fn) error` | streaming raw bson.M |
+
+---
+
+### 6. ExtendedCollection[T]
+
+`ExtendedCollection` คือ dynamic query builder สำหรับสร้าง filter แบบ chain ใช้ผ่าน `coll.Build(ctx)` หรือ `NewExCollFromClient`
+
+```go
+builder := coll.Build(ctx)
+
+// ค้นหา
+var u User
+err := builder.
+    By("Name", "Alice").
+    Where(bson.M{"active": true}).
+    First(&u)
+
+// ค้นหาหลายตัว
+var users []User
+err := builder.By("Role", "admin").Many(&users)
+
+// นับ
+count, err := builder.By("Active", true).Count()
+
+// ตรวจสอบว่ามี
+exists, err := builder.By("Email", "alice@example.com").Exists()
+
+// ดู filter ที่ build มา
+filter := builder.By("Name", "Alice").GetFilter()
+
+// อัพเดต
+err = builder.By("Name", "Alice").Save(bson.M{"$set": bson.M{"role": "admin"}})
+err = builder.By("Active", true).SaveMany(bson.M{"$set": bson.M{"status": "ok"}})
+
+// ลบ
+err = builder.By("Name", "OldUser").Del()
+err = builder.By("Active", false).DelMany()
+```
+
+> **หมายเหตุ**: `By("FieldName", value)` จะ resolve field name ผ่าน bson tag ของ struct ก่อน ถ้าไม่เจอจะ convert เป็น snake_case อัตโนมัติ เช่น `"UserName"` → `"user_name"`
+
+| Method | คำอธิบาย |
+|---|---|
+| `.By(field, value)` | เพิ่ม equality condition ใน filter |
+| `.Where(bson.M)` | merge filter เพิ่มเติม |
+| `.First(*T) error` | หา document แรก |
+| `.Many(*[]T) error` | หาทุก document |
+| `.Count() (int64, error)` | นับ |
+| `.Exists() (bool, error)` | ตรวจว่ามี |
+| `.GetFilter() any` | คืน filter ที่ build ไว้ |
+| `.Save(update, ...opts) error` | UpdateOne |
+| `.SaveMany(update, ...opts) error` | UpdateMany |
+| `.Del(...opts) error` | DeleteOne |
+| `.Delete(...opts) error` | alias ของ Del |
+| `.DelMany(...opts) error` | DeleteMany |
+| `.DeleteMany(...opts) error` | alias ของ DelMany |
+
+---
+
+### 7. Transaction (TxSession)
+
+#### Auto transaction (แนะนำ)
+
+```go
+err := coll.WithTx(func(ctx context.Context) error {
+    if err := coll.Ctx(ctx).Create(&order); err != nil {
+        return err // rollback อัตโนมัติ
+    }
+    return coll.Ctx(ctx).Upd(
+        bson.M{"_id": stockID},
+        bson.M{"$inc": bson.M{"qty": -1}},
+    )
+}) // commit ถ้าไม่มี error
+```
+
+#### Manual transaction
+
+```go
+func transferFunds(coll maango.Collection[Account], fromID, toID primitive.ObjectID, amount float64) (err error) {
+    tx, err := coll.StartTx()
+    if err != nil {
+        return err
+    }
+    defer tx.Close(&err) // commit ถ้า err == nil, abort ถ้า err != nil
+
+    ctx := tx.Ctx()
+    if err = coll.Ctx(ctx).Upd(bson.M{"_id": fromID}, bson.M{"$inc": bson.M{"balance": -amount}}); err != nil {
+        return
+    }
+    if err = coll.Ctx(ctx).Upd(bson.M{"_id": toID}, bson.M{"$inc": bson.M{"balance": amount}}); err != nil {
+        return
+    }
+    return
+}
+```
+
+| Method | คำอธิบาย |
+|---|---|
+| `coll.WithTx(fn)` | auto commit/rollback |
+| `coll.StartTx()` | เริ่ม manual transaction คืน `TxSession` |
+| `tx.Ctx()` | context ที่ต้องส่งให้ collection operations |
+| `tx.Close(&err)` | commit ถ้า `*err == nil`, abort ถ้า `*err != nil` |
+
+---
+
+### 8. Change Streams
+
+Change Streams ต้องการ MongoDB replica set หรือ Atlas cluster
+
+#### ตัวอย่างพื้นฐาน
+
+```go
+ctx := context.Background()
 
 err := coll.Watch(ctx).
     Stream(func(st maango.CsEvt[Order]) error {
-        fmt.Println(st.ChangeEvent.OperationType, st.ChangeEvent.DocumentKey)
+        evt := st.ChangeEvent
+        fmt.Printf("op=%s id=%v\n", evt.OperationType, evt.DocumentKey)
         return nil
     })
 ```
 
-#### ตัวอย่าง: Watch เฉพาะ insert + update พร้อม full document
+#### Operation filter
 
 ```go
-err := coll.Watch(ctx).
-    OnIstAndUpd().   // กรอง insert และ update เท่านั้น
-    UpdLookup().     // ดึง full document สำหรับ update events ด้วย
-    Stream(func(st maango.CsEvt[Order]) error {
-        ev := st.ChangeEvent
-        fmt.Printf("op=%s doc=%+v\n", ev.OperationType, ev.FullDocument)
-        return nil
-    })
+coll.Watch(ctx).OnIst()          // insert เท่านั้น
+coll.Watch(ctx).OnUpd()          // update เท่านั้น
+coll.Watch(ctx).OnDel()          // delete เท่านั้น
+coll.Watch(ctx).OnRep()          // replace เท่านั้น
+coll.Watch(ctx).OnIstAndUpd()    // insert + update (ใช้บ่อยที่สุด)
+coll.Watch(ctx).On("insert", "replace") // custom filter
 ```
 
-#### ตัวอย่าง: Resume หลังจาก interruption
+#### Full document lookup
+
+```go
+// update event จะมี FullDocument (ต้องการ extra read)
+coll.Watch(ctx).OnIstAndUpd().UpdLookup().
+    Stream(func(st maango.CsEvt[Order]) error {
+        if doc := st.ChangeEvent.FullDocument; doc != nil {
+            fmt.Printf("full doc: %+v\n", *doc)
+        }
+        return nil
+    })
+
+// Error ถ้า full document ไม่ available
+coll.Watch(ctx).FullDocRequired().Stream(handler)
+
+// ตั้งค่า fullDocument เอง
+coll.Watch(ctx).FullDoc("whenAvailable").Stream(handler)
+```
+
+#### Resume หลัง interruption
 
 ```go
 var lastToken bson.M
 
-// รอบแรก — เก็บ resume token ทุก event
+// บันทึก resume token ระหว่าง stream
 coll.Watch(ctx).Stream(func(st maango.CsEvt[Order]) error {
     lastToken = st.ChangeEvent.ResumeToken
     return nil
 })
 
-// restart ครั้งถัดไป — ต่อจากจุดที่หยุด
+// resume จาก token ที่บันทึกไว้
 coll.Watch(ctx).ResumeAfter(lastToken).Stream(handler)
+
+// StartAfter — resume ได้แม้หลัง invalidate event
+coll.Watch(ctx).StartAfter(lastToken).Stream(handler)
 ```
 
-#### Shortcut methods ทั้งหมด
+#### Advanced options
 
-| Method | เทียบเท่า |
+| Method | คำอธิบาย |
 |---|---|
-| `.OnIst()` | `.On("insert")` |
-| `.OnUpd()` | `.On("update")` |
-| `.OnDel()` | `.On("delete")` |
-| `.OnRep()` | `.On("replace")` |
-| `.OnIstAndUpd()` | `.On("insert", "update")` |
-| `.UpdLookup()` | `.FullDoc("updateLookup")` |
-| `.FullDocRequired()` | `.FullDoc("required")` |
+| `.Bsz(n int32)` | cursor batch size |
+| `.Collation(c)` | collation สำหรับ stream |
+| `.Comment(s string)` | comment ใน profiler/logs |
+| `.FullDocBefore(opt)` | `fullDocumentBeforeChange`: "off", "whenAvailable", "required" |
+| `.MaxAwait(d time.Duration)` | เวลา max ที่ server รอข้อมูลใหม่ |
+| `.ShowExpanded(b bool)` | expanded events (MongoDB 6.0+) |
+| `.StartAtTime(t *primitive.Timestamp)` | เริ่มจาก operation time ที่กำหนด |
+| `.Custom(m bson.M)` | custom document เพิ่มเติมใน command |
+| `.CustomPipeline(m bson.M)` | custom document ใน aggregation pipeline |
+| `.Opts(o *options.ChangeStreamOptions)` | raw options override |
 
-### Transaction
+#### Types
+
+**`ChangeEvent[T]`** — event แต่ละตัวที่ได้จาก stream
+
+| Field | Type | คำอธิบาย |
+|---|---|---|
+| `ResumeToken` | `bson.M` | token สำหรับ resume |
+| `OperationType` | `string` | "insert", "update", "replace", "delete", ... |
+| `FullDocument` | `*T` | typed document (nil สำหรับ delete; nil สำหรับ update ถ้าไม่ใช้ UpdLookup) |
+| `DocumentKey` | `bson.M` | `_id` (และ shard key ถ้ามี) ของ document ที่เปลี่ยน |
+| `Namespace` | `ChangeEventNamespace` | `{DB, Coll}` ที่เกิด event |
+| `UpdateDesc` | `*ChangeUpdateDesc` | มีเฉพาะ update event |
+
+**`ChangeUpdateDesc`** — รายละเอียดการ update
+
+| Field | Type | คำอธิบาย |
+|---|---|---|
+| `UpdatedFields` | `bson.M` | map ของ field ที่เปลี่ยน |
+| `RemovedFields` | `[]string` | รายการ field ที่ถูก unset |
+
+**`CsEvt[T]`** — argument ที่ส่งให้ callback
+
+| Field/Method | คำอธิบาย |
+|---|---|
+| `.ChangeEvent` | ข้อมูล event ทั้งหมด |
+| `.Ctx()` | context ที่ควบคุม lifetime ของ stream |
+
+**ข้อมูลที่มีตาม operation type:**
+
+| Operation | `FullDocument` | `UpdateDesc` | `DocumentKey` |
+|---|---|---|---|
+| insert | มีเสมอ | ไม่มี | มี |
+| update | nil (ยกเว้น UpdLookup) | มี | มี |
+| replace | มีเสมอ | ไม่มี | มี |
+| delete | nil เสมอ | ไม่มี | มี |
+
+---
+
+### 9. Model Defaults
+
+เพื่อให้ library auto-populate `_id`, `created_at`, `updated_at` บน `Create`/`CreateMany`, ให้ struct implement interface `defaultable`:
 
 ```go
-// แบบจัดการให้ครบ
-if err := coll.WithTx(func(txCtx context.Context) error {
-    return coll.Ctx(txCtx).Create(&BankConfig{Name: "tx"})
-}); err != nil {
-    panic(err)
-}
-
-// แบบควบคุมเองด้วย defer tx.Close(&err)
-tx, err := coll.StartTx()
-if err != nil {
-    panic(err)
-}
-var txErr error
-defer tx.Close(&txErr)
-
-txCtx := tx.Ctx()
-if err := coll.Ctx(txCtx).Create(&BankConfig{Name: "manual"}); err != nil {
-    txErr = err
-    panic(err)
-}
-```
-
-## Default Values สำหรับโมเดล
-
-หาก struct implement เมทอดต่อไปนี้ `Collection.Create` และ `CreateMany` จะเติมค่าให้อัตโนมัติ
-
-```go
-import (
-    "time"
-
-    "go.mongodb.org/mongo-driver/bson/primitive"
-)
-
-type AuditFields struct {
+type Order struct {
     ID        primitive.ObjectID `bson:"_id"`
     CreatedAt time.Time          `bson:"created_at"`
     UpdatedAt time.Time          `bson:"updated_at"`
+    Total     float64            `bson:"total"`
 }
 
-func (a *AuditFields) DefaultId() primitive.ObjectID {
-    if a.ID.IsZero() {
-        a.ID = primitive.NewObjectID()
+func (o *Order) DefaultId() primitive.ObjectID {
+    if o.ID.IsZero() {
+        o.ID = primitive.NewObjectID()
     }
-    return a.ID
+    return o.ID
 }
 
-func (a *AuditFields) DefaultCreatedAt() time.Time {
-    if a.CreatedAt.IsZero() {
-        a.CreatedAt = time.Now().UTC()
+func (o *Order) DefaultCreatedAt() time.Time {
+    if o.CreatedAt.IsZero() {
+        o.CreatedAt = time.Now().UTC()
     }
-    return a.CreatedAt
+    return o.CreatedAt
 }
 
-func (a *AuditFields) DefaultUpdatedAt() time.Time {
-    if a.UpdatedAt.IsZero() {
-        a.UpdatedAt = time.Now().UTC()
-    }
-    return a.UpdatedAt
+func (o *Order) DefaultUpdatedAt() time.Time {
+    o.UpdatedAt = time.Now().UTC()
+    return o.UpdatedAt
 }
 ```
 
-ตัวอย่างเต็มดูได้ที่ `internal/mongo/client_integration_test.go`
+> หาก struct ไม่ implement interface นี้ library จะ skip auto-populate
 
-## ใช้ร่วมกับ Repository Pattern
+---
+
+### 10. Auto DB Initialization ด้วย `DB[T]`
+
+`DB[T]` ใช้ reflection อ่าน struct tag `collection_name` และ initialize `Coll[T]` / `ExColl[T]` อัตโนมัติ
 
 ```go
-type BankRepository struct {
-    collection maango.Coll[BankConfig]
+type MyDatabase struct {
+    Users    maango.Coll[User]      `collection_name:"users"`
+    Orders   maango.Coll[Order]     `collection_name:"orders"`
+    Products maango.ExColl[Product] `collection_name:"products"`
 }
 
-func NewBankRepository(ctx context.Context, client maango.Client) *BankRepository {
-    return &BankRepository{
-        collection: maango.NewColl[BankConfig](ctx, client, "bank_config"),
+db := maango.DB[MyDatabase](ctx, client)
+
+// ใช้งานได้ทันที
+var user User
+_ = db.Users.FindOne(bson.M{"_id": id}).Result(&user)
+
+var orders []Order
+_ = db.Orders.Find(bson.M{"user_id": id}).Sort(bson.M{"created_at": -1}).Result(&orders)
+
+// ExColl ใช้ dynamic query
+count, _ := db.Products.
+    By("Category", "electronics").
+    Where(bson.M{"active": true}).
+    Count()
+```
+
+| Type | คำอธิบาย |
+|---|---|
+| `Coll[T]` | wraps `Collection[T]` รองรับ reflection |
+| `ExColl[T]` | wraps `ExtendedCollection[T]` รองรับ reflection |
+| `DB[T](ctx, client)` | สร้าง `*T` และ initialize ทุก field ที่มี tag `collection_name` |
+
+---
+
+### 11. Testing ด้วย FakeClient
+
+```go
+func TestCreateUser(t *testing.T) {
+    client, err := maango.NewFakeClient(
+        maango.WithFakeDatabase("testdb"),
+    )
+    if err != nil {
+        t.Fatal(err)
     }
-}
+    defer client.Close()
 
-func (r *BankRepository) FindDefault(ctx context.Context) (BankConfig, error) {
-    var cfg BankConfig
-    err := r.collection.Ctx(ctx).FindOne(bson.M{"is_default": true}).Result(&cfg)
-    return cfg, err
+    users := maango.NewColl[User](context.Background(), client, "users")
+
+    // ทดสอบ builder logic ที่ไม่ต้อง execute จริง
+    filter := users.Build(context.Background()).
+        By("Name", "test").
+        GetFilter()
+    _ = filter
 }
 ```
 
-## Development
+> **หมายเหตุ**: FakeClient สร้าง `*mongo.Client` ที่ยังไม่ได้ connect จริง เหมาะสำหรับ test ที่ต้องการ wire collection กับ struct fields ผ่าน `DB[T]` หรือ test builder logic สำหรับ test ที่ต้องการ query result จริงให้ใช้ integration test กับ MongoDB จริง
 
-### การรันเทสต์
+---
+
+## Package Structure
+
+```
+.
+├── main.go                     # Public API entry point (package maango)
+├── db.go                       # DB[T], Coll[T], ExColl[T]
+├── go.mod / go.sum
+└── internal/mongo/
+    ├── api.go                  # Interface definitions ทั้งหมด
+    ├── client.go               # MongoDB client + Option functions
+    ├── coll.go                 # collection[T] implements Collection[T]
+    ├── more-coll.go            # extendedCollection[T] implements ExtendedCollection[T]
+    ├── sub-qry.go              # single[T], many[T] builders
+    ├── aggregate.go            # agg[T] implements Aggregate[T]
+    ├── transaction-session.go  # transactionSession implements TxSession
+    ├── change-stream.go        # changeStream[T] implements ChangeStream[T]
+    ├── model-defaults.go       # defaultable interface + applyModelDefaults
+    └── fake_client.go          # FakeClient สำหรับ testing
+```
+
+## Common Commands
 
 ```bash
+# Build
+go build ./...
+
 # Unit tests
 go test ./...
 
-# Integration tests (ต้องการ MongoDB)
+# Integration tests (ต้องการ MongoDB replica set)
 MONGO_INTEGRATION_URI="mongodb://localhost:27017" go test ./internal/mongo -run ClientRoundTrip
 
-# ทดสอบพร้อม race detection
+# Race detection
 go test -race ./...
-```
 
-### Code Quality
-
-```bash
-# Format code
+# Format / vet
 go fmt ./...
-
-# Vet code
 go vet ./...
-
-# Build library
-go build ./...
 ```
-
-## License
-
-MIT License
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.

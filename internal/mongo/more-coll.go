@@ -4,9 +4,11 @@ import (
 	"context"
 	"reflect"
 	"strings"
+	"sync"
 
 	"go.mongodb.org/mongo-driver/bson"
 	mg "go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 //#region more-coll
@@ -26,6 +28,7 @@ func NewExtendedCollection[T any](ctx context.Context, collRead *mg.Collection, 
 	return &extendedCollection[T]{ctx: normalizeCtx(ctx), read: collRead, write: collWrite, name: name, filter: bson.M{}}
 }
 
+// clone returns a shallow copy of c with its filter deep-copied to avoid mutations.
 func (c *extendedCollection[T]) clone() *extendedCollection[T] {
 	next := *c
 	next.filter = copyFilter(c.filter)
@@ -33,10 +36,7 @@ func (c *extendedCollection[T]) clone() *extendedCollection[T] {
 	return &next
 }
 
-// Dynamic query methods
-// By is a helper method to set a field value in the filter.
-// Example:
-// builder.By("Name", "foo") will set the filter to {"name": "foo"}
+// By adds an equality condition on field (resolved via bson tag or snake_case) and returns a new builder.
 func (c *extendedCollection[T]) By(field string, value any) ExtendedCollection[T] {
 	mongoField := c.getMongoFieldName(field)
 	next := c.clone()
@@ -44,9 +44,7 @@ func (c *extendedCollection[T]) By(field string, value any) ExtendedCollection[T
 	return next
 }
 
-// Where is a helper method to set a filter in the query.
-// Example:
-// builder.Where(bson.M{"name": "foo"}) will set the filter to {"name": "foo"}
+// Where merges filter into the current accumulated filter and returns a new builder.
 func (c *extendedCollection[T]) Where(filter bson.M) ExtendedCollection[T] {
 	next := c.clone()
 	for k, v := range filter {
@@ -55,28 +53,12 @@ func (c *extendedCollection[T]) Where(filter bson.M) ExtendedCollection[T] {
 	return next
 }
 
-// First is a helper method to find the first document in the collection.
-// Example:
-// var result testDoc
-//
-//	if err := builder.First(&result); err != nil {
-//		return err
-//	}
-//
-// First will return the first document in the collection that matches the filter.
+// First decodes the first document matching the accumulated filter into result.
 func (c *extendedCollection[T]) First(result *T) error {
 	return c.read.FindOne(c.ctx, c.filter).Decode(result)
 }
 
-// Many is a helper method to find many documents in the collection.
-// Example:
-// var results []testDoc
-//
-//	if err := builder.Many(&results); err != nil {
-//		return err
-//	}
-//
-// Many will return all documents in the collection that matches the filter.
+// Many decodes all documents matching the accumulated filter into results.
 func (c *extendedCollection[T]) Many(results *[]T) error {
 	cur, err := c.read.Find(c.ctx, c.filter)
 	if err != nil {
@@ -86,87 +68,92 @@ func (c *extendedCollection[T]) Many(results *[]T) error {
 	return cur.All(c.ctx, results)
 }
 
-// Save is a helper method to save a document to the collection.
-// Example:
-//
-//	if err := builder.Save(bson.M{"name": "foo"}); err != nil {
-//		return err
-//	}
-//
-// Save will update the document in the collection that matches the filter.
-func (c *extendedCollection[T]) Save(doc any) error {
-	_, err := c.write.UpdateOne(c.ctx, c.filter, ensureUpdateHasTimestamp(doc))
+// Save performs a single-document update using the accumulated filter.
+// Automatically injects updated_at into the $set clause.
+func (c *extendedCollection[T]) Save(doc any, opts ...*options.UpdateOptions) error {
+	_, err := c.write.UpdateOne(c.ctx, c.filter, ensureUpdateHasTimestamp(doc), opts...)
 	return err
 }
 
-// SaveMany is a helper method to save many documents to the collection.
-// Example:
-//
-//	if err := builder.SaveMany(bson.M{"name": "foo"}); err != nil {
-//		return err
-//	}
-//
-// SaveMany will update many documents in the collection that matches the filter.
-func (c *extendedCollection[T]) SaveMany(update any) error {
-	_, err := c.write.UpdateMany(c.ctx, c.filter, ensureUpdateHasTimestamp(update))
+// SaveMany performs a multi-document update using the accumulated filter.
+// Automatically injects updated_at into the $set clause.
+func (c *extendedCollection[T]) SaveMany(update any, opts ...*options.UpdateOptions) error {
+	_, err := c.write.UpdateMany(c.ctx, c.filter, ensureUpdateHasTimestamp(update), opts...)
 	return err
 }
 
-// Delete is a helper method to delete a document from the collection.
-// Example:
-//
-//	if err := builder.Delete(); err != nil {
-//		return err
-//	}
-//
-// Delete will delete the document in the collection that matches the filter.
-func (c *extendedCollection[T]) Delete() error {
-	_, err := c.write.DeleteOne(c.ctx, c.filter)
+// Delete deletes the first document matching the accumulated filter. Alias for Del.
+func (c *extendedCollection[T]) Delete(opts ...*options.DeleteOptions) error {
+	_, err := c.write.DeleteOne(c.ctx, c.filter, opts...)
+	return err
+}
+// Del deletes the first document matching the accumulated filter.
+func (c *extendedCollection[T]) Del(opts ...*options.DeleteOptions) error {
+	_, err := c.write.DeleteOne(c.ctx, c.filter, opts...)
 	return err
 }
 
-// Count is a helper method to count the number of documents in the collection.
-// Example:
-//
-//	count, err := builder.Count(); err != nil {
-//		return err
-//	}
-//
-// Count will return the number of documents in the collection that matches the filter.
+// DelMany deletes all documents matching the accumulated filter.
+func (c *extendedCollection[T]) DelMany(opts ...*options.DeleteOptions) error {
+	_, err := c.write.DeleteMany(c.ctx, c.filter, opts...)
+	return err
+}
+
+// DeleteMany deletes all documents matching the accumulated filter. Alias for DelMany.
+func (c *extendedCollection[T]) DeleteMany(opts ...*options.DeleteOptions) error {
+	_, err := c.write.DeleteMany(c.ctx, c.filter, opts...)
+	return err
+}
+
+// Count returns the number of documents matching the accumulated filter.
 func (c *extendedCollection[T]) Count() (int64, error) {
-	var count int64
 	count, err := c.read.CountDocuments(c.ctx, c.filter)
 	return count, err
 }
 
-// Exists is a helper method to check if a document exists in the collection.
-// Example:
-//
-//	exists, err := builder.Exists(); err != nil {
-//		return err
-//	}
-//
-// Exists will return true if a document exists in the collection that matches the filter.
+// Exists returns true when at least one document matches the accumulated filter.
 func (c *extendedCollection[T]) Exists() (bool, error) {
 	count, err := c.Count()
 	return count > 0, err
 }
 
-// GetFilter is a helper method to get the filter in the query.
-// Example:
-// filter := builder.GetFilter();
-// GetFilter will return the filter in the query.
+// GetFilter returns the accumulated BSON filter as built by By/Where calls.
 func (c *extendedCollection[T]) GetFilter() any {
 	return c.filter
 }
 
+type fieldCacheKey struct {
+	typ   reflect.Type
+	field string
+}
+
+var fieldNameCache sync.Map // key: fieldCacheKey, value: string
+
+// getMongoFieldName resolves fieldName to a BSON key for type T.
+// Results are cached in fieldNameCache to avoid repeated reflection.
 func (c *extendedCollection[T]) getMongoFieldName(fieldName string) string {
 	var zero T
 	t := reflect.TypeOf(zero)
+	if t == nil {
+		return toSnakeCase(fieldName)
+	}
 	if t.Kind() == reflect.Ptr {
 		t = t.Elem()
 	}
 
+	key := fieldCacheKey{t, fieldName}
+	if cached, ok := fieldNameCache.Load(key); ok {
+		return cached.(string)
+	}
+
+	result := computeMongoFieldName(t, fieldName)
+	fieldNameCache.Store(key, result)
+	return result
+}
+
+// computeMongoFieldName walks the fields of t looking for fieldName.
+// Returns the value of the first bson tag part when found, otherwise the snake_case name.
+func computeMongoFieldName(t reflect.Type, fieldName string) string {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		if field.Name == fieldName {
@@ -179,7 +166,6 @@ func (c *extendedCollection[T]) getMongoFieldName(fieldName string) string {
 			return toSnakeCase(field.Name)
 		}
 	}
-
 	return toSnakeCase(fieldName)
 }
 

@@ -217,6 +217,16 @@ func TestAggregateErrorHandling(t *testing.T) {
 	})
 	// Error should be propagated from callback
 	testutil.AssertError(t, eachErr, "Each() should propagate callback errors")
+
+	// nil callback tests
+	err = aggregate.Stream(nil)
+	testutil.AssertError(t, err, "Stream(nil) should return error")
+
+	err = aggregate.Each(nil)
+	testutil.AssertError(t, err, "Each(nil) should return error")
+
+	err = aggregate.EachRaw(nil)
+	testutil.AssertError(t, err, "EachRaw(nil) should return error")
 }
 
 // TestAggregateContextHandling tests context handling in aggregation operations
