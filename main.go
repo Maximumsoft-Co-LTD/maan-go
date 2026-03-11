@@ -21,10 +21,12 @@ type (
 	FakeClientOption = mg.FakeClientOption
 )
 type (
-	// Collection is the fluent entry point for CRUD and aggregation operations on strongly typed documents.
-	Coll[T any] mg.Collection[T]
-	// ExtendedCollection supports building reusable dynamic queries that can be chained.
-	ExColl[T any] mg.ExtendedCollection[T]
+	// Coll is a concrete struct wrapping Collection[T] to support DB auto-initialization via reflection.
+	// All Collection[T] methods are accessible through embedding.
+	Coll[T any] struct{ mg.Collection[T] }
+	// ExColl is a concrete struct wrapping ExtendedCollection[T] to support DB auto-initialization via reflection.
+	// All ExtendedCollection[T] methods are accessible through embedding.
+	ExColl[T any] struct{ mg.ExtendedCollection[T] }
 	// SingleResult models a find-one query with optional modifiers.
 	SingleResult[T any] mg.SingleResult[T]
 	// ManyResult models a find-many query with modifiers and streaming helpers.
@@ -52,101 +54,78 @@ type (
 	BsonD bson.D
 )
 
-// NewClient proxies to pkg/mongo.NewClient.
+// NewClient creates a MongoDB client pair with optional read/write separation.
+// Requires at least WithWriteURI and WithDatabase options.
 func NewClient(ctx context.Context, opts ...Option) (Client, error) {
 	return mg.NewClient(ctx, opts...)
 }
 
-// NewFakeClient creates a fake client for testing without MongoDB.
+// NewFakeClient returns a Client backed by disconnected mongo.Client instances for unit testing.
+// No real MongoDB connection is established.
 func NewFakeClient(opts ...mg.FakeClientOption) (Client, error) {
 	return mg.NewFakeClient(opts...)
 }
 
-// Option helpers re-exported from the mg package.
-// WithWriteURI sets the write URI for the client.
+// WithFakeDatabase overrides the default database name used by NewFakeClient.
+func WithFakeDatabase(name string) FakeClientOption { return mg.WithFakeDatabase(name) }
+
+// WithFakeURI overrides the MongoDB URI stored inside NewFakeClient (never actually dialed).
+func WithFakeURI(uri string) FakeClientOption { return mg.WithFakeURI(uri) }
+
+// WithWriteURI sets the URI used for write operations (required).
 func WithWriteURI(uri string) Option { return mg.WithWriteURI(uri) }
 
-// WithReadURI sets the read URI for the client.
+// WithReadURI sets the URI used for read operations. Falls back to the write URI when omitted.
 func WithReadURI(uri string) Option { return mg.WithReadURI(uri) }
 
-// WithDatabase sets the database name for the client.
+// WithDatabase specifies the logical database name (required).
 func WithDatabase(name string) Option { return mg.WithDatabase(name) }
 
-// WithTimeout sets the timeout for the client.
+// WithTimeout overrides the connection timeout (default 60 s).
 func WithTimeout(d time.Duration) Option { return mg.WithTimeout(d) }
 
-// WithReadPreference sets the read preference for the client.
+// WithReadPreference overrides the read preference for the read client.
 func WithReadPreference(rp *readpref.ReadPref) Option { return mg.WithReadPreference(rp) }
 
-// WithWriteConcern sets the write concern for the client.
+// WithWriteConcern overrides the write concern for the write client.
 func WithWriteConcern(wc *writeconcern.WriteConcern) Option { return mg.WithWriteConcern(wc) }
 
-// WithClientOptions sets the client options for the client.
+// WithClientOptions allows callers to mutate the underlying mongo client options before dialing.
 func WithClientOptions(mutator func(*options.ClientOptions)) Option {
 	return mg.WithClientOptions(mutator)
 }
 
-// Collection constructors and helpers.
-// Example:
-// coll := NewColl[testDoc](context.Background(), client, "docs")
-// coll.FindOne(bson.M{"name": "foo"})
-// NewColl will return a new collection instance with the context set.
-// The collection is isolated and will not affect the original collection.
+// NewColl creates a strongly typed collection wrapper for the given collection name.
 func NewColl[T any](ctx context.Context, client Client, name string) Coll[T] {
-	return mg.NewCollection[T](ctx, client, name)
+	return Coll[T]{mg.NewCollection[T](ctx, client, name)}
 }
 
-// NewExColl is a helper method to create a new extended collection using raw mongo.Collection handles.
-// Prefer NewExCollFromClient when you have a Client available, as it avoids exposing mongo internals.
-// Example:
-// exColl := NewExColl[testDoc](context.Background(), read, write, "docs")
-// exColl.By("Name", "foo")
-// exColl.Where(bson.M{"active": true})
+// NewExColl creates an ExtendedCollection from raw *mongo.Collection handles.
+// Prefer NewExCollFromClient when a Client is available.
 func NewExColl[T any](ctx context.Context, read, write *mongo.Collection, name string) ExColl[T] {
-	return mg.NewExtendedCollection[T](ctx, read, write, name)
+	return ExColl[T]{mg.NewExtendedCollection[T](ctx, read, write, name)}
 }
 
-// NewExCollFromClient is the preferred way to create an extended collection.
-// It derives the read/write mongo.Collection handles from the Client automatically,
-// keeping the API consistent with NewColl.
-// Example:
-// exColl := NewExCollFromClient[testDoc](context.Background(), client, "docs")
-// exColl.By("Name", "foo")
-// exColl.Where(bson.M{"active": true})
+// NewExCollFromClient is the preferred way to create an ExtendedCollection.
+// It derives the read/write collection handles from Client automatically.
 func NewExCollFromClient[T any](ctx context.Context, client Client, name string) ExColl[T] {
 	dbName := client.DbName()
 	read := client.Read().Database(dbName).Collection(name)
 	write := client.Write().Database(dbName).Collection(name)
-	return mg.NewExtendedCollection[T](ctx, read, write, name)
+	return ExColl[T]{mg.NewExtendedCollection[T](ctx, read, write, name)}
 }
 
-// NewSingle is a helper method to create a new single result.
-// Example:
-// single := NewSingle[testDoc](context.Background(), coll, "docs", bson.M{"name": "foo"})
-// single.Result(&result)
-// NewSingle will return a new single result instance with the context set.
-// The single result is isolated and will not affect the original collection.
+// NewSingle creates a SingleResult builder. Normally obtained via Collection.FindOne.
 func NewSingle[T any](ctx context.Context, coll *mongo.Collection, collName string, query any) SingleResult[T] {
 	return mg.NewSingle[T](ctx, coll, collName, query)
 }
 
-// NewMany is a helper method to create a new many result.
-// Example:
-// many := NewMany[testDoc](context.Background(), coll, "docs", bson.M{"name": "foo"})
-// many.Result(&results)
-// NewMany will return a new many result instance with the context set.
-// The many result is isolated and will not affect the original collection.
+// NewMany creates a ManyResult builder. Normally obtained via Collection.Find/FindMany.
 func NewMany[T any](ctx context.Context, coll *mongo.Collection, collName string, filter any) ManyResult[T] {
 	return mg.NewMany[T](ctx, coll, collName, filter)
 }
 
-// NewAgg is a helper method to create a new aggregate.
-// Example:
-// agg := NewAgg[testDoc](context.Background(), coll, "docs", bson.M{"$match": bson.M{"name": "foo"}})
-// agg.Disk(true)
-// agg.Bsz(100)
-// NewAgg will return a new aggregate instance with the context set.
-// The aggregate is isolated and will not affect the original collection.
+// NewAgg creates an Aggregate builder. Normally obtained via Collection.Agg.
 func NewAgg[T any](ctx context.Context, coll *mongo.Collection, collName string, pipeline any) Aggregate[T] {
 	return mg.NewAgg[T](ctx, coll, collName, pipeline)
 }

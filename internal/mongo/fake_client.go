@@ -67,9 +67,16 @@ type fakeClient struct {
 	db    string
 }
 
+// Write returns the disconnected write client.
 func (f *fakeClient) Write() *mg.Client { return f.write }
-func (f *fakeClient) Read() *mg.Client  { return f.read }
-func (f *fakeClient) DbName() string    { return f.db }
+
+// Read returns the disconnected read client.
+func (f *fakeClient) Read() *mg.Client { return f.read }
+
+// DbName returns the configured test database name.
+func (f *fakeClient) DbName() string { return f.db }
+
+// Close disconnects both the fake read and write clients.
 func (f *fakeClient) Close() error {
 	var err error
 	if f.read != nil {

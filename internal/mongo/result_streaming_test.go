@@ -213,6 +213,13 @@ func TestStreamingErrorHandling(t *testing.T) {
 	})
 	// Should handle error gracefully
 	testutil.AssertNotNil(t, err, "Aggregate Each should propagate errors")
+
+	// nil callback tests
+	err = manyResult.Stream(nil)
+	testutil.AssertError(t, err, "ManyResult.Stream(nil) should return error")
+
+	err = manyResult.Each(nil)
+	testutil.AssertError(t, err, "ManyResult.Each(nil) should return error")
 }
 
 // TestContextCancellation tests context cancellation during streaming

@@ -2,6 +2,7 @@ package mongo
 
 import (
 	"context"
+	"errors"
 	"reflect"
 	"time"
 
@@ -12,8 +13,8 @@ import (
 
 // #region (queryCore)
 
-// queryCore holds the common state for MongoDB query builders.
-// It is not exported and is meant to be embedded by other query structs.
+// queryCore holds the shared state for single/many query builders.
+// It is unexported and embedded by single[T] and many[T].
 type queryCore struct {
 	ctx      context.Context
 	collName string
@@ -24,7 +25,7 @@ type queryCore struct {
 	hint     any
 }
 
-// newQueryCore initializes the common fields for a query builder.
+// newQueryCore initializes the shared fields for a single/many query builder.
 func newQueryCore(ctx context.Context, coll *mongo.Collection, collName string, filter any) queryCore {
 	if filter == nil {
 		filter = bson.M{}
@@ -48,18 +49,29 @@ type single[T any] struct {
 
 var _ SingleResult[any] = (*single[any])(nil)
 
-// NewSingle creates a new query builder for a single document.
+// NewSingle creates a SingleResult builder for query on coll. Normally called via Collection.FindOne.
 func NewSingle[T any](ctx context.Context, coll *mongo.Collection, collName string, query any) SingleResult[T] {
 	return &single[T]{
 		queryCore: newQueryCore(ctx, coll, collName, query),
 	}
 }
 
-func (s *single[T]) Proj(p any) SingleResult[T]                     { next := *s; next.proj = p; return &next }
-func (s *single[T]) Sort(v any) SingleResult[T]                     { next := *s; next.sort = v; return &next }
-func (s *single[T]) Hint(v any) SingleResult[T]                     { next := *s; next.hint = v; return &next }
-func (s *single[T]) Opts(o *options.FindOneOptions) SingleResult[T] { next := *s; next.extra = o; return &next }
-func (s *single[T]) build() *options.FindOneOptions {
+// Proj sets the projection document and returns a new builder.
+func (s *single[T]) Proj(p any) SingleResult[T] { next := *s; next.proj = p; return &next }
+
+// Sort sets the sort document and returns a new builder.
+func (s *single[T]) Sort(v any) SingleResult[T] { next := *s; next.sort = v; return &next }
+
+// Hint sets the index hint and returns a new builder.
+func (s *single[T]) Hint(v any) SingleResult[T] { next := *s; next.hint = v; return &next }
+
+// Opts merges raw FindOneOptions on top of the builder settings.
+func (s *single[T]) Opts(o *options.FindOneOptions) SingleResult[T] {
+	next := *s; next.extra = o; return &next
+}
+
+// buildOpts assembles the final FindOneOptions from builder state, applying extra as override.
+func (s *single[T]) buildOpts() []*options.FindOneOptions {
 	fo := options.FindOne()
 	if s.proj != nil {
 		fo.SetProjection(s.proj)
@@ -71,12 +83,14 @@ func (s *single[T]) build() *options.FindOneOptions {
 		fo.SetHint(s.hint)
 	}
 	if s.extra != nil {
-		return mergeFindOneOptions(fo, s.extra)
+		return []*options.FindOneOptions{fo, s.extra}
 	}
-	return fo
+	return []*options.FindOneOptions{fo}
 }
+// Result executes the find-one query and decodes the result into out.
+// Returns mongo.ErrNoDocuments when no document matches the filter.
 func (s *single[T]) Result(out *T) error {
-	return s.coll.FindOne(s.ctx, s.filter, s.build()).Decode(out)
+	return s.coll.FindOne(s.ctx, s.filter, s.buildOpts()...).Decode(out)
 }
 
 //#endregion
@@ -92,21 +106,38 @@ type many[T any] struct {
 
 var _ ManyResult[any] = (*many[any])(nil)
 
-// NewMany creates a new query builder for multiple documents.
+// NewMany creates a ManyResult builder for filter on coll. Normally called via Collection.Find/FindMany.
 func NewMany[T any](ctx context.Context, coll *mongo.Collection, collName string, filter any) ManyResult[T] {
 	return &many[T]{
 		queryCore: newQueryCore(ctx, coll, collName, filter),
 	}
 }
 
-func (m *many[T]) Proj(p any) ManyResult[T]                   { next := *m; next.proj = p; return &next }
-func (m *many[T]) Sort(s any) ManyResult[T]                   { next := *m; next.sort = s; return &next }
-func (m *many[T]) Hint(h any) ManyResult[T]                   { next := *m; next.hint = h; return &next }
-func (m *many[T]) Limit(n int64) ManyResult[T]                { next := *m; next.limit = n; return &next }
-func (m *many[T]) Skip(n int64) ManyResult[T]                 { next := *m; next.skip = n; return &next }
-func (m *many[T]) Bsz(n int32) ManyResult[T]                  { next := *m; next.batch = &n; return &next }
-func (m *many[T]) Opts(fo *options.FindOptions) ManyResult[T] { next := *m; next.extra = fo; return &next }
-func (m *many[T]) build() *options.FindOptions {
+// Proj sets the projection document and returns a new builder.
+func (m *many[T]) Proj(p any) ManyResult[T] { next := *m; next.proj = p; return &next }
+
+// Sort sets the sort document and returns a new builder.
+func (m *many[T]) Sort(s any) ManyResult[T] { next := *m; next.sort = s; return &next }
+
+// Hint sets the index hint and returns a new builder.
+func (m *many[T]) Hint(h any) ManyResult[T] { next := *m; next.hint = h; return &next }
+
+// Limit caps the number of documents returned and returns a new builder.
+func (m *many[T]) Limit(n int64) ManyResult[T] { next := *m; next.limit = n; return &next }
+
+// Skip skips the first n documents and returns a new builder.
+func (m *many[T]) Skip(n int64) ManyResult[T] { next := *m; next.skip = n; return &next }
+
+// Bsz sets the cursor batch size and returns a new builder.
+func (m *many[T]) Bsz(n int32) ManyResult[T] { next := *m; next.batch = &n; return &next }
+
+// Opts merges raw FindOptions on top of the builder settings.
+func (m *many[T]) Opts(fo *options.FindOptions) ManyResult[T] {
+	next := *m; next.extra = fo; return &next
+}
+
+// buildOpts assembles the final FindOptions from builder state, applying extra as override.
+func (m *many[T]) buildOpts() []*options.FindOptions {
 	fo := options.Find()
 	if m.limit > 0 {
 		fo.SetLimit(m.limit)
@@ -127,13 +158,14 @@ func (m *many[T]) build() *options.FindOptions {
 		fo.SetBatchSize(*m.batch)
 	}
 	if m.extra != nil {
-		return mergeFindOptions(fo, m.extra)
+		return []*options.FindOptions{fo, m.extra}
 	}
-	return fo
+	return []*options.FindOptions{fo}
 }
+// All executes the query and returns all matching documents.
 func (m *many[T]) All() ([]T, error) {
 	var out []T
-	cur, err := m.coll.Find(m.ctx, m.filter, m.build())
+	cur, err := m.coll.Find(m.ctx, m.filter, m.buildOpts()...)
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +183,7 @@ func (m *many[T]) All() ([]T, error) {
 	return out, nil
 }
 
+// Result executes the query and decodes all matching documents into out.
 func (m *many[T]) Result(out *[]T) error {
 	items, err := m.All()
 	if err != nil {
@@ -160,8 +193,13 @@ func (m *many[T]) Result(out *[]T) error {
 	return nil
 }
 
+// Stream executes the query and calls fn for each document.
+// Stops and returns the first non-nil error from fn.
 func (m *many[T]) Stream(fn func(ctx context.Context, doc T) error) error {
-	cur, err := m.coll.Find(m.ctx, m.filter, m.build())
+	if fn == nil {
+		return errors.New("fn must not be nil")
+	}
+	cur, err := m.coll.Find(m.ctx, m.filter, m.buildOpts()...)
 	if err != nil {
 		return err
 	}
@@ -178,13 +216,18 @@ func (m *many[T]) Stream(fn func(ctx context.Context, doc T) error) error {
 	return cur.Err()
 }
 
+// Each is an alias for Stream.
 func (m *many[T]) Each(fn func(ctx context.Context, doc T) error) error { return m.Stream(fn) }
-func (m *many[T]) Cnt() (int64, error)                                  { return m.coll.CountDocuments(m.ctx, m.filter) }
+
+// Cnt returns the count of documents matching the filter (ignores Limit/Skip).
+func (m *many[T]) Cnt() (int64, error) { return m.coll.CountDocuments(m.ctx, m.filter) }
 
 //#endregion
 
 // #region helper functions
 
+// ensureUpdateHasTimestamp wraps a raw update document in $set if needed and injects
+// updated_at = now when the caller has not already set it.
 func ensureUpdateHasTimestamp(update any) bson.M {
 	const updatedAt = "updated_at"
 	now := time.Now().UTC()
@@ -203,12 +246,15 @@ func ensureUpdateHasTimestamp(update any) bson.M {
 	}
 
 	set := toBsonM(u["$set"])
-	set[updatedAt] = now
+	if _, alreadySet := set[updatedAt]; !alreadySet {
+		set[updatedAt] = now
+	}
 	u["$set"] = set
 
 	return u
 }
 
+// toBsonM converts common BSON/map types to bson.M. Returns an empty bson.M for nil or unsupported types.
 func toBsonM(v any) bson.M {
 	switch m := v.(type) {
 	case nil:
@@ -231,122 +277,6 @@ func toBsonM(v any) bson.M {
 		}
 		return bson.M{}
 	}
-}
-
-func mergeFindOptions(fo *options.FindOptions, opts ...*options.FindOptions) *options.FindOptions {
-	if opts == nil {
-		return fo
-	}
-	for _, opt := range opts {
-		if opt == nil {
-			continue
-		}
-
-		if opt.AllowDiskUse != nil {
-			fo.AllowDiskUse = opt.AllowDiskUse
-		}
-		if opt.AllowPartialResults != nil {
-			fo.AllowPartialResults = opt.AllowPartialResults
-		}
-		if opt.BatchSize != nil {
-			fo.BatchSize = opt.BatchSize
-		}
-		if opt.Collation != nil {
-			fo.Collation = opt.Collation
-		}
-		if opt.Comment != nil {
-			fo.Comment = opt.Comment
-		}
-		if opt.CursorType != nil {
-			fo.CursorType = opt.CursorType
-		}
-		if opt.Let != nil {
-			fo.Let = opt.Let
-		}
-		if opt.Max != nil {
-			fo.Max = opt.Max
-		}
-		if opt.MaxAwaitTime != nil {
-			fo.MaxAwaitTime = opt.MaxAwaitTime
-		}
-		if opt.MaxTime != nil {
-			fo.MaxTime = opt.MaxTime
-		}
-		if opt.Min != nil {
-			fo.Min = opt.Min
-		}
-		if opt.NoCursorTimeout != nil {
-			fo.NoCursorTimeout = opt.NoCursorTimeout
-		}
-		if opt.ReturnKey != nil {
-			fo.ReturnKey = opt.ReturnKey
-		}
-		if opt.ShowRecordID != nil {
-			fo.ShowRecordID = opt.ShowRecordID
-		}
-		if opt.Sort != nil {
-			fo.Sort = opt.Sort
-		}
-		if opt.Projection != nil {
-			fo.Projection = opt.Projection
-		}
-		if opt.Hint != nil {
-			fo.Hint = opt.Hint
-		}
-		if opt.Limit != nil {
-			fo.Limit = opt.Limit
-		}
-		if opt.Skip != nil {
-			fo.Skip = opt.Skip
-		}
-	}
-	return fo
-}
-
-func mergeFindOneOptions(fo *options.FindOneOptions, opts ...*options.FindOneOptions) *options.FindOneOptions {
-	if opts == nil {
-		return fo
-	}
-	for _, opt := range opts {
-		if opt == nil {
-			continue
-		}
-		if opt.AllowPartialResults != nil {
-			fo.AllowPartialResults = opt.AllowPartialResults
-		}
-		if opt.Collation != nil {
-			fo.Collation = opt.Collation
-		}
-		if opt.Comment != nil {
-			fo.Comment = opt.Comment
-		}
-		if opt.Max != nil {
-			fo.Max = opt.Max
-		}
-		if opt.MaxTime != nil {
-			fo.MaxTime = opt.MaxTime
-		}
-		if opt.Min != nil {
-			fo.Min = opt.Min
-		}
-		if opt.ReturnKey != nil {
-			fo.ReturnKey = opt.ReturnKey
-		}
-		if opt.ShowRecordID != nil {
-			fo.ShowRecordID = opt.ShowRecordID
-		}
-		if opt.Sort != nil {
-			fo.Sort = opt.Sort
-		}
-		if opt.Projection != nil {
-			fo.Projection = opt.Projection
-		}
-		if opt.Hint != nil {
-			fo.Hint = opt.Hint
-		}
-	}
-
-	return fo
 }
 
 //#endregion
