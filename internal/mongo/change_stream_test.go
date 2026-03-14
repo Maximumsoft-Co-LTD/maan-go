@@ -22,7 +22,7 @@ func newTestChangeStream(t *testing.T) ChangeStream[testutil.TestDoc] {
 
 	ctx := context.Background()
 	coll := NewCollection[testutil.TestDoc](ctx, client, testutil.TestCollectionName)
-	return coll.Watch(ctx)
+	return coll.Watch()
 }
 
 // TestChangeStreamOpFilters tests OnIst / OnUpd / OnDel / OnRep / OnIstAndUpd builder methods.
@@ -211,6 +211,54 @@ func TestChangeStreamBuildPipeline(t *testing.T) {
 	})
 }
 
+// mergeChangeStreamOptions merges multiple ChangeStreamOptions into one.
+// Later entries override earlier ones for non-nil fields.
+func mergeChangeStreamOptions(opts []*options.ChangeStreamOptions) *options.ChangeStreamOptions {
+	merged := options.ChangeStream()
+	for _, opt := range opts {
+		if opt == nil {
+			continue
+		}
+		if opt.BatchSize != nil {
+			merged.BatchSize = opt.BatchSize
+		}
+		if opt.Collation != nil {
+			merged.Collation = opt.Collation
+		}
+		if opt.Comment != nil {
+			merged.Comment = opt.Comment
+		}
+		if opt.FullDocument != nil {
+			merged.FullDocument = opt.FullDocument
+		}
+		if opt.FullDocumentBeforeChange != nil {
+			merged.FullDocumentBeforeChange = opt.FullDocumentBeforeChange
+		}
+		if opt.MaxAwaitTime != nil {
+			merged.MaxAwaitTime = opt.MaxAwaitTime
+		}
+		if opt.ResumeAfter != nil {
+			merged.ResumeAfter = opt.ResumeAfter
+		}
+		if opt.ShowExpandedEvents != nil {
+			merged.ShowExpandedEvents = opt.ShowExpandedEvents
+		}
+		if opt.StartAfter != nil {
+			merged.StartAfter = opt.StartAfter
+		}
+		if opt.StartAtOperationTime != nil {
+			merged.StartAtOperationTime = opt.StartAtOperationTime
+		}
+		if opt.Custom != nil {
+			merged.Custom = opt.Custom
+		}
+		if opt.CustomPipeline != nil {
+			merged.CustomPipeline = opt.CustomPipeline
+		}
+	}
+	return merged
+}
+
 // TestChangeStreamOptsBuildOverride tests that Opts() fields override builder fields.
 func TestChangeStreamOptsBuildOverride(t *testing.T) {
 	base := newTestChangeStream(t)
@@ -218,7 +266,8 @@ func TestChangeStreamOptsBuildOverride(t *testing.T) {
 	t.Run("Opts overrides Bsz", func(t *testing.T) {
 		override := int32(999)
 		cs := base.Bsz(10).Opts(options.ChangeStream().SetBatchSize(override))
-		opts, _ := cs.(*changeStream[testutil.TestDoc]).build()
+		listerOpts, _ := cs.(*changeStream[testutil.TestDoc]).build()
+		opts := mergeChangeStreamOptions(listerOpts)
 		testutil.AssertNotNil(t, opts.BatchSize, "BatchSize should be set")
 		testutil.AssertEqual(t, override, *opts.BatchSize, "Opts should override Bsz")
 	})
@@ -226,7 +275,8 @@ func TestChangeStreamOptsBuildOverride(t *testing.T) {
 	t.Run("Opts overrides fullDocument", func(t *testing.T) {
 		override := options.FullDocument("required")
 		cs := base.UpdLookup().Opts(options.ChangeStream().SetFullDocument(override))
-		opts, _ := cs.(*changeStream[testutil.TestDoc]).build()
+		listerOpts, _ := cs.(*changeStream[testutil.TestDoc]).build()
+		opts := mergeChangeStreamOptions(listerOpts)
 		testutil.AssertNotNil(t, opts.FullDocument, "FullDocument should be set")
 		testutil.AssertEqual(t, override, *opts.FullDocument, "Opts should override FullDoc")
 	})
@@ -234,7 +284,8 @@ func TestChangeStreamOptsBuildOverride(t *testing.T) {
 	t.Run("builder fields preserved when Opts does not set them", func(t *testing.T) {
 		token := bson.M{"_data": "xyz"}
 		cs := base.ResumeAfter(token).Opts(options.ChangeStream().SetBatchSize(5))
-		opts, _ := cs.(*changeStream[testutil.TestDoc]).build()
+		listerOpts, _ := cs.(*changeStream[testutil.TestDoc]).build()
+		opts := mergeChangeStreamOptions(listerOpts)
 
 		testutil.AssertNotNil(t, opts.ResumeAfter, "ResumeAfter should be preserved from builder")
 		testutil.AssertNotNil(t, opts.BatchSize, "BatchSize should come from Opts")

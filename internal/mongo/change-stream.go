@@ -19,7 +19,7 @@ import (
 // changeStream[T] holds the configuration for a MongoDB collection-level change stream.
 // Fields are set via the fluent builder methods and consumed by build() / Stream().
 type changeStream[T any] struct {
-	ctx            context.Context              // lifetime of the stream; comes from Watch(ctx)
+	ctx            context.Context              // lifetime of the stream; comes from collection's context via Watch()
 	coll           *mg.Collection               // read client collection to call Watch on
 	collName       string                       // stored for diagnostics / error messages
 	pipeline       []any                        // user-supplied aggregation stages (optional)
@@ -27,7 +27,7 @@ type changeStream[T any] struct {
 	fullDoc        string                       // fullDocument option ("updateLookup", "required", etc.)
 	resumeAfter    bson.M                       // resume token — stream restarts after this event
 	startAfter     bson.M                       // like resumeAfter but supports post-invalidate resume
-	extra          *options.ChangeStreamOptions // raw options merged last; override builder settings
+	extra          *options.ChangeStreamOptions // raw options builder merged last; overrides builder settings
 	batchSize      *int32
 	collation      *options.Collation
 	comment        string
@@ -43,7 +43,7 @@ type changeStream[T any] struct {
 var _ ChangeStream[any] = (*changeStream[any])(nil)
 
 // NewChangeStream creates a new ChangeStream builder bound to the given collection.
-// Normally called via Collection.Watch(ctx, pipeline...) rather than directly.
+// Normally called via Collection.Watch(pipeline...) rather than directly.
 func NewChangeStream[T any](ctx context.Context, coll *mg.Collection, collName string, pipeline []any) ChangeStream[T] {
 	return &changeStream[T]{
 		ctx:      normalizeCtx(ctx),
@@ -106,7 +106,7 @@ func (cs *changeStream[T]) StartAfter(token bson.M) ChangeStream[T] {
 	return &next
 }
 
-// Opts applies raw ChangeStreamOptions, merged on top of any builder settings (escape hatch).
+// Opts applies raw ChangeStreamOptionsBuilder, merged on top of any builder settings (escape hatch).
 func (cs *changeStream[T]) Opts(o *options.ChangeStreamOptions) ChangeStream[T] {
 	next := *cs
 	next.extra = o
@@ -165,8 +165,8 @@ func (cs *changeStream[T]) Stream(fn func(st CsEvt[T]) error) error {
 	if fn == nil {
 		return errors.New("fn must not be nil")
 	}
-	opts, pipeline := cs.build()
-	stream, err := cs.coll.Watch(cs.ctx, pipeline, opts)
+	listerOpts, pipeline := cs.build()
+	stream, err := cs.coll.Watch(cs.ctx, pipeline, listerOpts...)
 	if err != nil {
 		return err
 	}
@@ -192,9 +192,9 @@ func (cs *changeStream[T]) Each(fn func(st CsEvt[T]) error) error {
 // build assembles the final ChangeStreamOptions and the aggregation pipeline.
 // If onOps is non-empty, a $match stage is prepended to filter by operationType.
 // The user-supplied pipeline stages follow after that filter.
-// Builder fields are applied first; Opts() fields are merged on top so that
-// Opts() acts as a final escape-hatch override without wiping builder settings.
-func (cs *changeStream[T]) build() (*options.ChangeStreamOptions, []any) {
+// Builder fields are applied first; extra (Opts) is appended as a second Lister
+// so that Opts() acts as a final escape-hatch override without wiping builder settings.
+func (cs *changeStream[T]) build() ([]*options.ChangeStreamOptions, []any) {
 	opts := options.ChangeStream()
 	if cs.fullDoc != "" {
 		opts.SetFullDocument(options.FullDocument(cs.fullDoc))
@@ -232,8 +232,10 @@ func (cs *changeStream[T]) build() (*options.ChangeStreamOptions, []any) {
 	if cs.customPipeline != nil {
 		opts.SetCustomPipeline(cs.customPipeline)
 	}
+
+	listerOpts := []*options.ChangeStreamOptions{opts}
 	if cs.extra != nil {
-		mergeChangeStreamOpts(opts, cs.extra)
+		listerOpts = append(listerOpts, cs.extra)
 	}
 
 	pipeline := make([]any, 0, len(cs.pipeline)+1)
@@ -244,49 +246,7 @@ func (cs *changeStream[T]) build() (*options.ChangeStreamOptions, []any) {
 	}
 	pipeline = append(pipeline, cs.pipeline...)
 
-	return opts, pipeline
-}
-
-// mergeChangeStreamOpts copies non-nil fields from src into dst.
-// Only fields explicitly set in src override the corresponding dst fields,
-// preserving any values already set by the fluent builder methods.
-func mergeChangeStreamOpts(dst, src *options.ChangeStreamOptions) {
-	if src.BatchSize != nil {
-		dst.BatchSize = src.BatchSize
-	}
-	if src.Collation != nil {
-		dst.Collation = src.Collation
-	}
-	if src.Comment != nil {
-		dst.Comment = src.Comment
-	}
-	if src.FullDocument != nil {
-		dst.FullDocument = src.FullDocument
-	}
-	if src.FullDocumentBeforeChange != nil {
-		dst.FullDocumentBeforeChange = src.FullDocumentBeforeChange
-	}
-	if src.MaxAwaitTime != nil {
-		dst.MaxAwaitTime = src.MaxAwaitTime
-	}
-	if src.ResumeAfter != nil {
-		dst.ResumeAfter = src.ResumeAfter
-	}
-	if src.ShowExpandedEvents != nil {
-		dst.ShowExpandedEvents = src.ShowExpandedEvents
-	}
-	if src.StartAtOperationTime != nil {
-		dst.StartAtOperationTime = src.StartAtOperationTime
-	}
-	if src.StartAfter != nil {
-		dst.StartAfter = src.StartAfter
-	}
-	if src.Custom != nil {
-		dst.Custom = src.Custom
-	}
-	if src.CustomPipeline != nil {
-		dst.CustomPipeline = src.CustomPipeline
-	}
+	return listerOpts, pipeline
 }
 
 // decodeChangeEvent decodes the current cursor position of a *mongo.ChangeStream into a

@@ -93,9 +93,9 @@ func TestAggregateResults(t *testing.T) {
 	// Error is expected with fake client, but method should exist and handle nil gracefully
 	_ = err
 
-	// Test Result() with nil pointer (should handle gracefully)
+	// Test Result() with nil pointer (should return an error)
 	err = aggregate.Result(nil)
-	testutil.AssertNoError(t, err, "Result() should handle nil pointer gracefully")
+	testutil.AssertError(t, err, "Result() should return error for nil pointer")
 
 	// Test Raw() method interface
 	rawResults, err := aggregate.Raw()
@@ -198,9 +198,9 @@ func TestAggregateErrorHandling(t *testing.T) {
 	aggregate := collection.Agg(nil)
 	testutil.AssertNotNil(t, aggregate, "Agg() should handle nil pipeline")
 
-	// Test Result() with nil pointer
+	// Test Result() with nil pointer (should return an error)
 	err = aggregate.Result(nil)
-	testutil.AssertNoError(t, err, "Result() should handle nil pointer gracefully")
+	testutil.AssertError(t, err, "Result() should return error for nil pointer")
 
 	// Test streaming with error in callback
 	pipeline := bson.A{bson.M{"$match": bson.M{}}}

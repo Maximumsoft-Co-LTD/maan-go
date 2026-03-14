@@ -87,6 +87,7 @@ func (c *extendedCollection[T]) Delete(opts ...*options.DeleteOptions) error {
 	_, err := c.write.DeleteOne(c.ctx, c.filter, opts...)
 	return err
 }
+
 // Del deletes the first document matching the accumulated filter.
 func (c *extendedCollection[T]) Del(opts ...*options.DeleteOptions) error {
 	_, err := c.write.DeleteOne(c.ctx, c.filter, opts...)

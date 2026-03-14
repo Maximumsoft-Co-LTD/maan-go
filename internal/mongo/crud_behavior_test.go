@@ -11,9 +11,9 @@ import (
 // TestDoc for CRUD behavior testing
 type CrudTestDoc struct {
 	ID     primitive.ObjectID `bson:"_id"`
-	Name   string             `bson:"name"`
-	Status string             `bson:"status"`
-	Value  int                `bson:"value"`
+	Name   string        `bson:"name"`
+	Status string        `bson:"status"`
+	Value  int           `bson:"value"`
 }
 
 func TestCRUDBehaviorDifferences(t *testing.T) {

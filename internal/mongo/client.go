@@ -110,22 +110,14 @@ func NewClient(ctx context.Context, opts ...Option) (Client, error) {
 		readURI = cfg.writeURI
 	}
 
-	baseCtx := ctx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
-
-	timedCtx, cancel := context.WithTimeout(baseCtx, cfg.timeout)
-	defer cancel()
-
-	writeCli, err := connect(timedCtx, cfg.writeURI, &cfg, kindWrite)
+	writeCli, err := connect(ctx, cfg.writeURI, &cfg, kindWrite)
 	if err != nil {
 		return nil, err
 	}
 
 	readCli := writeCli
 	if readURI != cfg.writeURI {
-		readCli, err = connect(timedCtx, readURI, &cfg, kindRead)
+		readCli, err = connect(ctx, readURI, &cfg, kindRead)
 		if err != nil {
 			_ = writeCli.Disconnect(context.Background())
 			return nil, err
@@ -143,7 +135,7 @@ const (
 )
 
 // connect dials a MongoDB server at uri and applies kind-specific options (read preference / write concern).
-func connect(timedCtx context.Context, uri string, cfg *clientConfig, kind connectionKind) (*mg.Client, error) {
+func connect(ctx context.Context, uri string, cfg *clientConfig, kind connectionKind) (*mg.Client, error) {
 	clientOpts := options.Client().ApplyURI(uri)
 	for _, mutator := range cfg.clientOpts {
 		mutator(clientOpts)
@@ -159,7 +151,7 @@ func connect(timedCtx context.Context, uri string, cfg *clientConfig, kind conne
 		}
 	}
 
-	cli, err := mg.Connect(timedCtx, clientOpts)
+	cli, err := mg.Connect(ctx, clientOpts)
 	if err != nil {
 		return nil, err
 	}

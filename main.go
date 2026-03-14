@@ -19,6 +19,8 @@ type (
 	Option           = mg.Option
 	Session          = mg.TxSession
 	FakeClientOption = mg.FakeClientOption
+	// IndexManager provides index management operations on a MongoDB collection.
+	IndexManager = mg.IndexManager
 )
 type (
 	// Coll is a concrete struct wrapping Collection[T] to support DB auto-initialization via reflection.

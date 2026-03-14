@@ -10,7 +10,7 @@ import (
 
 type transactionSession struct {
 	session    mg.Session
-	sessionCtx mg.SessionContext
+	sessionCtx context.Context
 	ctx        context.Context
 	once       sync.Once
 }

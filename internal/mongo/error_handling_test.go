@@ -45,6 +45,16 @@ func TestNilInputHandling(t *testing.T) {
 		_ = err
 	})
 
+	t.Run("WithTx with nil function returns error", func(t *testing.T) {
+		err := collection.WithTx(nil)
+		if err == nil {
+			t.Fatal("expected error for nil fn, got nil")
+		}
+		if err.Error() != "fn must not be nil" {
+			t.Fatalf("expected 'fn must not be nil', got %q", err.Error())
+		}
+	})
+
 	t.Run("FindOne with nil query", func(t *testing.T) {
 		defer func() {
 			if r := recover(); r != nil {

@@ -202,10 +202,10 @@ func testAggregationResultTypeHandling() gopter.Prop {
 		err = aggregate.Result(&resultSlice)
 		// Error is expected with fake client, but method should exist
 
-		// Test that Result() handles nil gracefully
+		// Test that Result() returns an error for nil pointer
 		err = aggregate.Result(nil)
-		if err != nil {
-			// Result() should handle nil gracefully and return nil error
+		if err == nil {
+			// Result() should return an error when given nil pointer
 			return false
 		}
 
@@ -488,10 +488,10 @@ func testAggregationErrorConditionHandling() gopter.Prop {
 		})
 		// Should handle callback errors gracefully even with options
 
-		// Test Result() with nil pointer (should handle gracefully)
+		// Test Result() with nil pointer (should return an error)
 		err = aggregate.Result(nil)
-		if err != nil {
-			// Result() should handle nil pointer gracefully and return nil error
+		if err == nil {
+			// Result() should return an error for nil pointer
 			return false
 		}
 
