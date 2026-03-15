@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -116,14 +117,18 @@ func (c *collection[T]) CreateMany(docs *[]T, opts ...*options.InsertManyOptions
 // Save performs an upsert: updates the first matching document or inserts if none found.
 // Automatically injects updated_at into the $set clause.
 func (c *collection[T]) Save(filter any, update any, opts ...*options.UpdateOptions) error {
-	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...)
+	upsertOpt := options.Update().SetUpsert(true)
+	allOpts := append([]*options.UpdateOptions{upsertOpt}, opts...)
+	_, err := c.write.UpdateOne(c.getCtx(), filter, ensureUpdateHasTimestamp(update), allOpts...)
 	return err
 }
 
 // SaveMany performs a multi-document upsert for all documents matching filter.
 // Automatically injects updated_at into the $set clause.
 func (c *collection[T]) SaveMany(filter any, update any, opts ...*options.UpdateOptions) error {
-	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...)
+	upsertOpt := options.Update().SetUpsert(true)
+	allOpts := append([]*options.UpdateOptions{upsertOpt}, opts...)
+	_, err := c.write.UpdateMany(c.getCtx(), filter, ensureUpdateHasTimestamp(update), allOpts...)
 	return err
 }
 
@@ -143,6 +148,41 @@ func (c *collection[T]) UpdMany(filter any, update any, opts ...*options.UpdateO
 func (c *collection[T]) Del(filter any, opts ...*options.DeleteOptions) error {
 	_, err := c.write.DeleteOne(c.getCtx(), filter, opts...)
 	return err
+}
+
+// DelMany deletes all documents matching filter.
+func (c *collection[T]) DelMany(filter any, opts ...*options.DeleteOptions) error {
+	_, err := c.write.DeleteMany(c.getCtx(), filter, opts...)
+	return err
+}
+
+// FindOneAndUpd atomically finds the first document matching filter, applies update, and decodes the result into out.
+// Automatically injects updated_at into the $set clause.
+func (c *collection[T]) FindOneAndUpd(filter any, update any, out *T, opts ...*options.FindOneAndUpdateOptions) error {
+	return c.write.FindOneAndUpdate(c.getCtx(), filter, ensureUpdateHasTimestamp(update), opts...).Decode(out)
+}
+
+// FindOneAndDel atomically finds the first document matching filter, deletes it, and decodes it into out.
+func (c *collection[T]) FindOneAndDel(filter any, out *T, opts ...*options.FindOneAndDeleteOptions) error {
+	return c.write.FindOneAndDelete(c.getCtx(), filter, opts...).Decode(out)
+}
+
+// Distinct returns the distinct values for the given field across all documents matching filter.
+// Pass nil filter to match all documents.
+func (c *collection[T]) Distinct(field string, filter any) ([]any, error) {
+	if filter == nil {
+		filter = bson.M{}
+	}
+	return c.read.Distinct(c.getCtx(), field, filter)
+}
+
+// Count returns the number of documents matching filter.
+// Pass nil filter to count all documents.
+func (c *collection[T]) Count(filter any) (int64, error) {
+	if filter == nil {
+		filter = bson.M{}
+	}
+	return c.read.CountDocuments(c.getCtx(), filter)
 }
 
 // Agg returns an Aggregate builder for the given aggregation pipeline.
@@ -178,18 +218,32 @@ func (c *collection[T]) StartTx() (TxSession, error) {
 }
 
 // WithTx runs fn inside an automatically managed transaction.
-// Commits when fn returns nil; rolls back otherwise.
-func (c *collection[T]) WithTx(fn func(ctx context.Context) error) error {
+// Commits when fn returns nil; rolls back otherwise. Panics inside fn are caught and rolled back.
+func (c *collection[T]) WithTx(fn func(ctx context.Context) error) (retErr error) {
+	if fn == nil {
+		return errors.New("fn must not be nil")
+	}
 	sess, err := c.client.Write().StartSession()
 	if err != nil {
 		return err
 	}
 	defer sess.EndSession(c.getCtx())
 
-	_, err = sess.WithTransaction(c.getCtx(), func(sc mg.SessionContext) (any, error) {
-		return nil, fn(sc)
-	})
-	return err
+	if err = sess.StartTransaction(); err != nil {
+		return err
+	}
+	txCtx := mg.NewSessionContext(c.getCtx(), sess)
+	defer func() {
+		if r := recover(); r != nil {
+			_ = sess.AbortTransaction(txCtx)
+			retErr = fmt.Errorf("transaction panic: %v", r)
+		}
+	}()
+	if err = fn(txCtx); err != nil {
+		_ = sess.AbortTransaction(txCtx)
+		return err
+	}
+	return sess.CommitTransaction(txCtx)
 }
 
 // Find returns a ManyResult builder for filter. Alias for FindMany.
@@ -199,10 +253,17 @@ func (c *collection[T]) Find(filter any) ManyResult[T] {
 	}
 	return NewMany[T](c.getCtx(), c.read, c.collName, filter)
 }
+
 // Watch returns a ChangeStream builder for real-time change events on the collection.
+// The collection's bound context (set via Ctx) controls the stream lifetime.
 // Requires a MongoDB replica set or sharded cluster.
-func (c *collection[T]) Watch(ctx context.Context, pipeline ...any) ChangeStream[T] {
-	return NewChangeStream[T](ctx, c.read, c.collName, pipeline)
+func (c *collection[T]) Watch(pipeline ...any) ChangeStream[T] {
+	return NewChangeStream[T](c.getCtx(), c.read, c.collName, pipeline)
+}
+
+// Idx returns an IndexManager for managing indexes on this collection.
+func (c *collection[T]) Idx() IndexManager {
+	return &indexManager{ctx: c.getCtx(), view: c.write.Indexes()}
 }
 
 // copyFilter returns a shallow copy of original to avoid mutation of shared filter maps.
@@ -225,33 +286,3 @@ func toSnakeCase(s string) string {
 	}
 	return strings.ToLower(result.String())
 }
-
-// func (c *coll[T]) FindPg(filter any, opt *portOut.PageOpt) ([]T, int64, error) {
-// 	q := c.Find(filter)
-// 	if opt != nil {
-// 		if opt.Limit > 0 {
-// 			q = q.Limit(opt.Limit)
-// 		}
-// 		if opt.Skip > 0 {
-// 			q = q.Skip(opt.Skip)
-// 		}
-// 		if opt.Sort != nil {
-// 			q = q.Sort(opt.Sort)
-// 		}
-// 		if opt.Projection != nil {
-// 			q = q.Proj(opt.Projection)
-// 		}
-// 		if opt.Hint != nil {
-// 			q = q.Hint(opt.Hint)
-// 		}
-// 	}
-// 	items, err := q.All()
-// 	if err != nil {
-// 		return nil, 0, err
-// 	}
-// 	total, err := c.read.CountDocuments(c.ctx, filter)
-// 	if err != nil {
-// 		return nil, 0, err
-// 	}
-// 	return items, total, nil
-// }

@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"time"
 
 	mg "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -46,7 +47,11 @@ func NewFakeClient(opts ...FakeClientOption) (Client, error) {
 		opt(&cfg)
 	}
 	build := func() (*mg.Client, error) {
-		return mg.NewClient(options.Client().ApplyURI(cfg.uri))
+		// ServerSelectionTimeout is set very short so unit-test operations fail fast
+		// instead of hanging 30 s waiting for a server that is not running.
+		return mg.Connect(context.Background(), options.Client().
+			ApplyURI(cfg.uri).
+			SetServerSelectionTimeout(5 * time.Millisecond))
 	}
 	write, err := build()
 	if err != nil {

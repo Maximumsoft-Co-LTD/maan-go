@@ -6,7 +6,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
+	mg "go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -14,10 +14,10 @@ import (
 // and the database name it is scoped to.
 type Client interface {
 	// Write returns the underlying *mongo.Client configured for write operations.
-	Write() *mongo.Client
+	Write() *mg.Client
 	// Read returns the underlying *mongo.Client configured for read operations.
 	// Returns the same client as Write when no separate read URI was configured.
-	Read() *mongo.Client
+	Read() *mg.Client
 	// DbName returns the logical database name this client is scoped to.
 	DbName() string
 	// Close disconnects both write and read clients. Safe to call even when
@@ -57,6 +57,19 @@ type Collection[T any] interface {
 	UpdMany(filter any, update any, opts ...*options.UpdateOptions) error
 	// Del deletes the first document matching filter.
 	Del(filter any, opts ...*options.DeleteOptions) error
+	// DelMany deletes all documents matching filter.
+	DelMany(filter any, opts ...*options.DeleteOptions) error
+	// FindOneAndUpd atomically finds the first document matching filter, applies update, and decodes the result into out.
+	// Automatically injects updated_at into the $set clause.
+	FindOneAndUpd(filter any, update any, out *T, opts ...*options.FindOneAndUpdateOptions) error
+	// FindOneAndDel atomically finds the first document matching filter, deletes it, and decodes it into out.
+	FindOneAndDel(filter any, out *T, opts ...*options.FindOneAndDeleteOptions) error
+	// Distinct returns the distinct values for the given field across all documents matching filter.
+	// Pass nil filter to match all documents.
+	Distinct(field string, filter any) ([]any, error)
+	// Count returns the number of documents matching filter.
+	// Pass nil filter to count all documents.
+	Count(filter any) (int64, error)
 	// Agg returns an Aggregate builder for the given aggregation pipeline.
 	Agg(pipeline any) Aggregate[T]
 	// RegexFields performs a case-insensitive regex search across the given field names.
@@ -71,8 +84,25 @@ type Collection[T any] interface {
 	// Call tx.Close(&err) (usually via defer) to commit or rollback.
 	StartTx() (TxSession, error)
 	// Watch returns a ChangeStream builder for real-time change events on the collection.
+	// The collection's bound context (set via Ctx) controls the stream lifetime.
 	// Requires a MongoDB replica set or sharded cluster.
-	Watch(ctx context.Context, pipeline ...any) ChangeStream[T]
+	Watch(pipeline ...any) ChangeStream[T]
+	// Idx returns an IndexManager for managing indexes on this collection.
+	Idx() IndexManager
+}
+
+// IndexManager provides index management operations on a MongoDB collection.
+type IndexManager interface {
+	// CreateOne creates a single index on the collection and returns the index name.
+	CreateOne(model mg.IndexModel, opts ...*options.CreateIndexesOptions) (string, error)
+	// CreateMany creates multiple indexes on the collection and returns their names.
+	CreateMany(models []mg.IndexModel, opts ...*options.CreateIndexesOptions) ([]string, error)
+	// DropOne drops the index with the given name.
+	DropOne(name string, opts ...*options.DropIndexesOptions) error
+	// DropAll drops all non-_id indexes on the collection.
+	DropAll(opts ...*options.DropIndexesOptions) error
+	// List returns all indexes on the collection as a slice of bson.M documents.
+	List(opts ...*options.ListIndexesOptions) ([]bson.M, error)
 }
 
 // ExtendedCollection supports building reusable dynamic queries that can be chained.
@@ -205,7 +235,7 @@ type ChangeUpdateDesc struct {
 //
 // Example:
 //
-//	coll.Watch(ctx).OnIstAndUpd().UpdLookup().
+//	coll.Watch().OnIstAndUpd().UpdLookup().
 //	    Stream(func(st maango.CsEvt[Order]) error {
 //	        log.Printf("op=%s id=%v", st.ChangeEvent.OperationType, st.ChangeEvent.DocumentKey)
 //	        if doc := st.ChangeEvent.FullDocument; doc != nil {
@@ -261,7 +291,7 @@ type ChangeEvent[T any] struct {
 //
 // Basic example — react to every change:
 //
-//	err := coll.Watch(ctx).
+//	err := coll.Ctx(ctx).Watch().
 //	    Stream(func(st maango.CsEvt[Order]) error {
 //	        fmt.Println(st.ChangeEvent.OperationType)
 //	        return nil
@@ -269,7 +299,7 @@ type ChangeEvent[T any] struct {
 //
 // Filtered example — inserts and updates, with full document on updates:
 //
-//	err := coll.Watch(ctx).
+//	err := coll.Ctx(ctx).Watch().
 //	    OnIstAndUpd().
 //	    UpdLookup().
 //	    Stream(func(st maango.CsEvt[Order]) error {
@@ -282,12 +312,12 @@ type ChangeEvent[T any] struct {
 // Resume after interruption:
 //
 //	var lastToken bson.M
-//	coll.Watch(ctx).Stream(func(st maango.CsEvt[Order]) error {
+//	coll.Ctx(ctx).Watch().Stream(func(st maango.CsEvt[Order]) error {
 //	    lastToken = st.ChangeEvent.ResumeToken
 //	    return nil
 //	})
 //	// ... restart later:
-//	coll.Watch(ctx).ResumeAfter(lastToken).Stream(handler)
+//	coll.Ctx(ctx).Watch().ResumeAfter(lastToken).Stream(handler)
 type ChangeStream[T any] interface {
 	// On filters events to the specified operation types.
 	// Valid values: "insert", "update", "replace", "delete", "drop", "rename", "invalidate".
@@ -345,11 +375,11 @@ type ChangeStream[T any] interface {
 	CustomPipeline(m bson.M) ChangeStream[T]
 
 	// Stream opens the change stream and calls fn for every incoming event until fn
-	// returns a non-nil error or the context passed to Watch is cancelled.
+	// returns a non-nil error or the collection's context is cancelled.
 	//
 	// Example:
 	//
-	//	err := coll.Watch(ctx).OnIstAndUpd().UpdLookup().
+	//	err := coll.Ctx(ctx).Watch().OnIstAndUpd().UpdLookup().
 	//	    Stream(func(st maango.CsEvt[Order]) error {
 	//	        fmt.Println(st.ChangeEvent.OperationType, st.ChangeEvent.FullDocument)
 	//	        return nil

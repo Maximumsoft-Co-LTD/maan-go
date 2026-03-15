@@ -43,12 +43,14 @@ func (a *agg[T]) Disk(b bool) Aggregate[T] {
 	next.allowDisk = boolPtr(b)
 	return &next
 }
+
 // Bsz sets the cursor batch size for the aggregation result.
 func (a *agg[T]) Bsz(n int32) Aggregate[T] {
 	next := *a
 	next.batch = int32Ptr(n)
 	return &next
 }
+
 // Opts merges raw AggregateOptions on top of the builder settings (Disk, Bsz).
 func (a *agg[T]) Opts(ao *options.AggregateOptions) Aggregate[T] {
 	next := *a
@@ -57,9 +59,10 @@ func (a *agg[T]) Opts(ao *options.AggregateOptions) Aggregate[T] {
 }
 
 // Result executes the pipeline and decodes all results into out.
+// Returns an error if out is nil.
 func (a *agg[T]) Result(out *[]T) error {
 	if out == nil {
-		return nil
+		return errors.New("out must not be nil")
 	}
 	items, err := a.All()
 	if err != nil {
@@ -71,7 +74,7 @@ func (a *agg[T]) Result(out *[]T) error {
 
 // openCursor runs the aggregation pipeline and returns the raw cursor.
 func (a *agg[T]) openCursor() (*mongo.Cursor, error) {
-	return a.coll.Aggregate(a.getCtx(), a.pipeline, a.build())
+	return a.coll.Aggregate(a.getCtx(), a.pipeline, a.build()...)
 }
 
 // All executes the pipeline and returns all typed results.
@@ -169,44 +172,21 @@ func (a *agg[T]) EachRaw(fn func(ctx context.Context, doc bson.M) error) error {
 	return a.streamRaw(fn)
 }
 
-func (a *agg[T]) build() *options.AggregateOptions {
-	ao := options.Aggregate()
+// build assembles the final AggregateOptions from builder state.
+// Builder fields are applied first; extra (Opts) is appended as a second Lister,
+// so it acts as a final override without wiping builder settings.
+func (a *agg[T]) build() []*options.AggregateOptions {
+	opts := options.Aggregate()
 	if a.allowDisk != nil {
-		ao.SetAllowDiskUse(*a.allowDisk)
+		opts.SetAllowDiskUse(*a.allowDisk)
 	}
 	if a.batch != nil {
-		ao.SetBatchSize(*a.batch)
+		opts.SetBatchSize(*a.batch)
 	}
 	if a.extra != nil {
-		mergeAggregateOpts(ao, a.extra)
+		return []*options.AggregateOptions{opts, a.extra}
 	}
-	return ao
-}
-
-// mergeAggregateOpts copies non-nil fields from src into dst so that Opts() acts as
-// a final override without wiping values already set by the fluent builder methods.
-func mergeAggregateOpts(dst, src *options.AggregateOptions) {
-	if src.AllowDiskUse != nil {
-		dst.AllowDiskUse = src.AllowDiskUse
-	}
-	if src.BatchSize != nil {
-		dst.BatchSize = src.BatchSize
-	}
-	if src.MaxTime != nil {
-		dst.MaxTime = src.MaxTime
-	}
-	if src.Comment != nil {
-		dst.Comment = src.Comment
-	}
-	if src.Hint != nil {
-		dst.Hint = src.Hint
-	}
-	if src.Let != nil {
-		dst.Let = src.Let
-	}
-	if src.Custom != nil {
-		dst.Custom = src.Custom
-	}
+	return []*options.AggregateOptions{opts}
 }
 
 //#endregion

@@ -14,9 +14,9 @@ import (
 
 type integrationDoc struct {
 	ID        primitive.ObjectID `bson:"_id"`
-	Name      string             `bson:"name"`
-	CreatedAt time.Time          `bson:"created_at"`
-	UpdatedAt time.Time          `bson:"updated_at"`
+	Name      string        `bson:"name"`
+	CreatedAt time.Time     `bson:"created_at"`
+	UpdatedAt time.Time     `bson:"updated_at"`
 }
 
 func (d *integrationDoc) DefaultId() primitive.ObjectID {

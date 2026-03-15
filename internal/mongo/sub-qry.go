@@ -87,6 +87,7 @@ func (s *single[T]) buildOpts() []*options.FindOneOptions {
 	}
 	return []*options.FindOneOptions{fo}
 }
+
 // Result executes the find-one query and decodes the result into out.
 // Returns mongo.ErrNoDocuments when no document matches the filter.
 func (s *single[T]) Result(out *T) error {
@@ -162,6 +163,7 @@ func (m *many[T]) buildOpts() []*options.FindOptions {
 	}
 	return []*options.FindOptions{fo}
 }
+
 // All executes the query and returns all matching documents.
 func (m *many[T]) All() ([]T, error) {
 	var out []T
@@ -264,7 +266,11 @@ func toBsonM(v any) bson.M {
 	case map[string]any:
 		return bson.M(m)
 	case bson.D:
-		return m.Map()
+		out := make(bson.M, len(m))
+		for _, e := range m {
+			out[e.Key] = e.Value
+		}
+		return out
 	default:
 		rv := reflect.ValueOf(v)
 		if rv.IsValid() && rv.Kind() == reflect.Map && rv.Type().Key().Kind() == reflect.String {
