@@ -22,6 +22,7 @@ type (
 	// IndexManager provides index management operations on a MongoDB collection.
 	IndexManager = mg.IndexManager
 )
+
 type (
 	// Coll is a concrete struct wrapping Collection[T] to support DB auto-initialization via reflection.
 	// All Collection[T] methods are accessible through embedding.
@@ -100,6 +101,23 @@ func WithClientOptions(mutator func(*options.ClientOptions)) Option {
 // NewColl creates a strongly typed collection wrapper for the given collection name.
 func NewColl[T any](ctx context.Context, client Client, name string) Coll[T] {
 	return Coll[T]{mg.NewCollection[T](ctx, client, name)}
+}
+
+// WithTx for start open Transaction auto (recommend to use this method for safety)
+// If there is a database operation within this func, MongoDB will lock the relevant documents immediately.
+func WithTx(ctx context.Context, client Client, fn func(ctx context.Context) error) error {
+	return client.WithTx(ctx, fn)
+}
+
+// Ctx for binding Context (such as Transaction or Timeout) to Collection
+// To ensure the next command (such as Save, Update) works under the Transaction Lock.
+func (c Coll[T]) Ctx(ctx context.Context) Coll[T] {
+	return Coll[T]{c.Collection.Ctx(ctx)}
+}
+
+// Build create ExtendedCollection that binds to Context to help write continuous Query.
+func (c Coll[T]) Build(ctx context.Context) ExColl[T] {
+	return ExColl[T]{c.Collection.Build(ctx)}
 }
 
 // NewExColl creates an ExtendedCollection from raw *mongo.Collection handles.
