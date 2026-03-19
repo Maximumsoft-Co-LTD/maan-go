@@ -104,7 +104,7 @@ func NewColl[T any](ctx context.Context, client Client, name string) Coll[T] {
 }
 
 // WithTx for start open Transaction auto (recommend to use this method for safety)
-// If there is a database contact within this func, MongoDB will lock the relevant data rows immediately.
+// If there is a database operation within this func, MongoDB will lock the relevant documents immediately.
 func WithTx(ctx context.Context, client Client, fn func(ctx context.Context) error) error {
 	return client.WithTx(ctx, fn)
 }
