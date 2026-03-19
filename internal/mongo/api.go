@@ -141,6 +141,8 @@ type ExtendedCollection[T any] interface {
 	Exists() (bool, error)
 	// GetFilter returns the accumulated BSON filter as built by By/Where calls.
 	GetFilter() any
+	// Ctx returns a new ExtendedCollection instance with the given context.
+	Ctx(ctx context.Context) ExtendedCollection[T]
 }
 
 // SingleResult models a find-one query with optional modifiers.

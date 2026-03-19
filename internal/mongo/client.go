@@ -186,6 +186,12 @@ func (c *client) WithTx(ctx context.Context, fn func(ctx context.Context) error)
 	if fn == nil {
 		return errors.New("fn must not be nil")
 	}
+
+	// Reuse existing session if detected (no nested transactions)
+	if sess := mg.SessionFromContext(ctx); sess != nil {
+		return fn(ctx)
+	}
+
 	sess, err := c.write.StartSession()
 	if err != nil {
 		return err

@@ -55,12 +55,12 @@ func (c *extendedCollection[T]) Where(filter bson.M) ExtendedCollection[T] {
 
 // First decodes the first document matching the accumulated filter into result.
 func (c *extendedCollection[T]) First(result *T) error {
-	return c.read.FindOne(c.ctx, c.filter).Decode(result)
+	return c.getReadColl().FindOne(c.ctx, c.filter).Decode(result)
 }
 
 // Many decodes all documents matching the accumulated filter into results.
 func (c *extendedCollection[T]) Many(results *[]T) error {
-	cur, err := c.read.Find(c.ctx, c.filter)
+	cur, err := c.getReadColl().Find(c.ctx, c.filter)
 	if err != nil {
 		return err
 	}
@@ -108,7 +108,7 @@ func (c *extendedCollection[T]) DeleteMany(opts ...*options.DeleteOptions) error
 
 // Count returns the number of documents matching the accumulated filter.
 func (c *extendedCollection[T]) Count() (int64, error) {
-	count, err := c.read.CountDocuments(c.ctx, c.filter)
+	count, err := c.getReadColl().CountDocuments(c.ctx, c.filter)
 	return count, err
 }
 
@@ -118,9 +118,23 @@ func (c *extendedCollection[T]) Exists() (bool, error) {
 	return count > 0, err
 }
 
+func (c *extendedCollection[T]) getReadColl() *mg.Collection {
+	if mg.SessionFromContext(c.ctx) != nil {
+		return c.write
+	}
+	return c.read
+}
+
 // GetFilter returns the accumulated BSON filter as built by By/Where calls.
 func (c *extendedCollection[T]) GetFilter() any {
 	return c.filter
+}
+
+// Ctx returns a new ExtendedCollection instance with the given context.
+func (c *extendedCollection[T]) Ctx(ctx context.Context) ExtendedCollection[T] {
+	next := c.clone()
+	next.ctx = normalizeCtx(ctx)
+	return next
 }
 
 type fieldCacheKey struct {

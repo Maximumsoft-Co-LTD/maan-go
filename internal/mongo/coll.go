@@ -71,7 +71,7 @@ func (c *collection[T]) FindOne(query any) SingleResult[T] {
 	if query == nil {
 		query = bson.M{}
 	}
-	return NewSingle[T](c.getCtx(), c.read, c.collName, query)
+	return NewSingle[T](c.getCtx(), c.getReadColl(), c.collName, query)
 }
 
 // FindMany returns a ManyResult builder for the given filter.
@@ -80,7 +80,7 @@ func (c *collection[T]) FindMany(filter any) ManyResult[T] {
 	if filter == nil {
 		filter = bson.M{}
 	}
-	return NewMany[T](c.getCtx(), c.read, c.collName, filter)
+	return NewMany[T](c.getCtx(), c.getReadColl(), c.collName, filter)
 }
 
 // Create inserts doc as a single document. Returns error if doc is nil.
@@ -172,7 +172,7 @@ func (c *collection[T]) Distinct(field string, filter any) ([]any, error) {
 	if filter == nil {
 		filter = bson.M{}
 	}
-	return c.read.Distinct(c.getCtx(), field, filter)
+	return c.getReadColl().Distinct(c.getCtx(), field, filter)
 }
 
 // Count returns the number of documents matching filter.
@@ -181,12 +181,12 @@ func (c *collection[T]) Count(filter any) (int64, error) {
 	if filter == nil {
 		filter = bson.M{}
 	}
-	return c.read.CountDocuments(c.getCtx(), filter)
+	return c.getReadColl().CountDocuments(c.getCtx(), filter)
 }
 
 // Agg returns an Aggregate builder for the given aggregation pipeline.
 func (c *collection[T]) Agg(pipeline any) Aggregate[T] {
-	return NewAgg[T](c.getCtx(), c.read, c.collName, pipeline)
+	return NewAgg[T](c.getCtx(), c.getReadColl(), c.collName, pipeline)
 }
 
 // RegexFields performs a case-insensitive regex search across the given field names.
@@ -222,19 +222,26 @@ func (c *collection[T]) WithTx(fn func(ctx context.Context) error) (retErr error
 	return c.client.WithTx(c.getCtx(), fn)
 }
 
+func (c *collection[T]) getReadColl() *mg.Collection {
+	if mg.SessionFromContext(c.getCtx()) != nil { // Check has transaction
+		return c.write
+	}
+	return c.read
+}
+
 // Find returns a ManyResult builder for filter. Alias for FindMany.
 func (c *collection[T]) Find(filter any) ManyResult[T] {
 	if filter == nil {
 		filter = bson.M{}
 	}
-	return NewMany[T](c.getCtx(), c.read, c.collName, filter)
+	return NewMany[T](c.getCtx(), c.getReadColl(), c.collName, filter)
 }
 
 // Watch returns a ChangeStream builder for real-time change events on the collection.
 // The collection's bound context (set via Ctx) controls the stream lifetime.
 // Requires a MongoDB replica set or sharded cluster.
 func (c *collection[T]) Watch(pipeline ...any) ChangeStream[T] {
-	return NewChangeStream[T](c.getCtx(), c.read, c.collName, pipeline)
+	return NewChangeStream[T](c.getCtx(), c.getReadColl(), c.collName, pipeline)
 }
 
 // Idx returns an IndexManager for managing indexes on this collection.
