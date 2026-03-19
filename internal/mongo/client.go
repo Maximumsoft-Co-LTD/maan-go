@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	mg "go.mongodb.org/mongo-driver/mongo"
@@ -173,4 +174,43 @@ func (c *client) Close() error {
 		}
 	}
 	return closeErr
+}
+
+// StartTx begins a manual transaction and returns a TxSession.
+func (c *client) StartTx(ctx context.Context) (TxSession, error) {
+	return NewTransactionSession(ctx, c)
+}
+
+// WithTx runs fn inside an automatically managed transaction.
+func (c *client) WithTx(ctx context.Context, fn func(ctx context.Context) error) (retErr error) {
+	if fn == nil {
+		return errors.New("fn must not be nil")
+	}
+
+	// Reuse existing session if detected (no nested transactions)
+	if sess := mg.SessionFromContext(ctx); sess != nil {
+		return fn(ctx)
+	}
+
+	sess, err := c.write.StartSession()
+	if err != nil {
+		return err
+	}
+	defer sess.EndSession(ctx)
+
+	if err = sess.StartTransaction(); err != nil {
+		return err
+	}
+	txCtx := mg.NewSessionContext(ctx, sess)
+	defer func() {
+		if r := recover(); r != nil {
+			_ = sess.AbortTransaction(txCtx)
+			retErr = fmt.Errorf("transaction panic: %v", r)
+		}
+	}()
+	if err = fn(txCtx); err != nil {
+		_ = sess.AbortTransaction(txCtx)
+		return err
+	}
+	return sess.CommitTransaction(txCtx)
 }
