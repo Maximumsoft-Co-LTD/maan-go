@@ -23,6 +23,12 @@ type Client interface {
 	// Close disconnects both write and read clients. Safe to call even when
 	// read and write share the same underlying connection.
 	Close() error
+	// WithTx runs fn inside an automatically managed transaction.
+	// Commits on nil error; rolls back otherwise.
+	WithTx(ctx context.Context, fn func(ctx context.Context) error) error
+	// StartTx begins a manual transaction and returns a TxSession.
+	// Call tx.Close(&err) (usually via defer) to commit or rollback.
+	StartTx(ctx context.Context) (TxSession, error)
 }
 
 // Collection is the fluent entry point for CRUD and aggregation operations on strongly typed documents.

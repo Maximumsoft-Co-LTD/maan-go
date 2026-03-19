@@ -3,7 +3,6 @@ package mongo
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 
 	"go.mongodb.org/mongo-driver/bson"
@@ -214,36 +213,13 @@ func (c *collection[T]) Name() string {
 // StartTx begins a manual transaction and returns a TxSession.
 // Call tx.Close(&err) (usually via defer) to commit or rollback.
 func (c *collection[T]) StartTx() (TxSession, error) {
-	return NewTransactionSession(c.getCtx(), c.client)
+	return c.client.StartTx(c.getCtx())
 }
 
 // WithTx runs fn inside an automatically managed transaction.
 // Commits when fn returns nil; rolls back otherwise. Panics inside fn are caught and rolled back.
 func (c *collection[T]) WithTx(fn func(ctx context.Context) error) (retErr error) {
-	if fn == nil {
-		return errors.New("fn must not be nil")
-	}
-	sess, err := c.client.Write().StartSession()
-	if err != nil {
-		return err
-	}
-	defer sess.EndSession(c.getCtx())
-
-	if err = sess.StartTransaction(); err != nil {
-		return err
-	}
-	txCtx := mg.NewSessionContext(c.getCtx(), sess)
-	defer func() {
-		if r := recover(); r != nil {
-			_ = sess.AbortTransaction(txCtx)
-			retErr = fmt.Errorf("transaction panic: %v", r)
-		}
-	}()
-	if err = fn(txCtx); err != nil {
-		_ = sess.AbortTransaction(txCtx)
-		return err
-	}
-	return sess.CommitTransaction(txCtx)
+	return c.client.WithTx(c.getCtx(), fn)
 }
 
 // Find returns a ManyResult builder for filter. Alias for FindMany.

@@ -92,3 +92,13 @@ func (f *fakeClient) Close() error {
 	}
 	return err
 }
+
+// StartTx returns an error as transactions are not supported by the fake client.
+func (f *fakeClient) StartTx(ctx context.Context) (TxSession, error) {
+	return nil, errors.New("maan-go: transactions not supported by fake client")
+}
+
+// WithTx returns an error as transactions are not supported by the fake client.
+func (f *fakeClient) WithTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return errors.New("maan-go: transactions not supported by fake client")
+}
